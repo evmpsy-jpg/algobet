@@ -1,0 +1,20 @@
+# Единственное место, где бизнес-поля связаны с буквами Excel.
+columns:
+  h2h_games: CP
+  form_p1: Q
+  form_p2: X
+  bg_p1: BG
+  bf_p2: BF
+  probability_p1: CV
+  probability_p2: CW
+  p1_exact: EG
+  p2_exact: EH
+  p1_range: CS
+  p2_range: CT
+  h2h_p1: AA
+  h2h_p2: AB
+  average_h2h_handicap: AI
+  average_difference: EF
+  set1_handicap: DS
+  set2_handicap: DV
+  set3_handicap: DY

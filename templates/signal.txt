@@ -1,0 +1,39 @@
+{title}
+━━━━━━━━━━━━━━━━━━━━
+
+⏳ Через {lead_minutes} минут
+
+🏓 {tournament_line}
+🕐 Начало: {match_time} МСК
+
+📌 {player_1}
+⚔️
+{player_2}
+
+🟢 Вероятность: {probability}%
+
+👉 Ставка:
+{selected_player}
+
+━━━━━━━━━━━━━━━━━━━━
+
+🏓 Фора по мячам за последние 5 H2H
+относительно первого игрока:
+
+1️⃣ Сет: {set1_handicap}
+2️⃣ Сет: {set2_handicap}
+3️⃣ Сет: {set3_handicap}
+
+━━━━━━━━━━━━━━━━━━━━
+
+📊 Общая статистика H2H
+
+Победы: {h2h_p1} / {h2h_p2}
+
+📈 Средняя фора:
+{average_h2h_handicap} ({h2h_games} игр в H2H)
+
+🔥 Средняя разница:
+{average_difference} очков ({recent_h2h_wins}/{recent_h2h_total} в H2H)
+
+━━━━━━━━━━━━━━━━━━━━

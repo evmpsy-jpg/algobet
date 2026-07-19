@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# SQLite
+*.sqlite3
+*.db
+
+# Environment
+.env
+
+# Uploads
+uploads/
+
+# Excel
+*.xlsx
+*.xls
+
+# Python cache
+.pytest_cache/
+
+# OS
+Thumbs.db
+.DS_Store

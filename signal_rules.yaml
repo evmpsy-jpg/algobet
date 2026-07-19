@@ -1,0 +1,26 @@
+algorithm:
+  version: "v1.0"
+
+signal:
+  lead_minutes: 20
+  min_h2h_games: 5
+  min_favorite_form: 7
+  min_bg_p1: 1.3
+  min_bf_p2: 1.3
+  p1:
+    exact_value: 5
+    range_values: [8, 9, 10]
+  p2:
+    exact_value: 5
+    range_values: [8, 9, 10]
+
+levels:
+  top:
+    min_probability: 90
+    title: "🔥 ТОП СИГНАЛ — НА СЕТ"
+  strong:
+    min_probability: 85
+    title: "🟢 СИЛЬНЫЙ СИГНАЛ — НА СЕТ"
+  standard:
+    min_probability: 0
+    title: "🎯 СИГНАЛ — НА СЕТ"
