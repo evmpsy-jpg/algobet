@@ -246,3 +246,50 @@ def test_rejects_when_h2h_games_are_below_current_minimum() -> None:
     decision = evaluate_match(make_match(h2h_games=4))
 
     assert decision.suitable is False
+
+
+def test_selects_p2_when_p1_probability_is_missing() -> None:
+    decision = evaluate_match(
+        make_match(
+            p1_exact=5,
+            p2_exact=5,
+            probability_p1=None,
+            probability_p2=91,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 2
+    assert decision.selected_player == "Игрок 2"
+    assert decision.probability == 91
+
+
+def test_selects_p1_when_p2_probability_is_missing() -> None:
+    decision = evaluate_match(
+        make_match(
+            p1_exact=5,
+            p2_exact=5,
+            probability_p1=89,
+            probability_p2=None,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 1
+    assert decision.selected_player == "Игрок 1"
+    assert decision.probability == 89
+
+
+def test_rejects_when_probabilities_are_missing() -> None:
+    decision = evaluate_match(
+        make_match(
+            p1_exact=5,
+            p2_exact=5,
+            probability_p1=None,
+            probability_p2=None,
+        )
+    )
+
+    assert decision.suitable is False
+    assert decision.side is None
+    assert "Нет вероятности" in decision.reason
