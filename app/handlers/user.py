@@ -5,7 +5,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 from sqlalchemy import select
 
-from app.config import get_settings
+from app.settings import get_settings
 from app.database.models import User
 from app.database.session import SessionFactory
 from app.keyboards.common import main_menu

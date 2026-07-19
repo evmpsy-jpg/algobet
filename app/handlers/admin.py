@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import desc, func, select
 
-from app.config import get_settings
+from app.settings import get_settings
 from app.database.models import ImportBatch, Match, ScheduledSignal, User
 from app.database.session import SessionFactory
 from app.keyboards.common import admin_menu

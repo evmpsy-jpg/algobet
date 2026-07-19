@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
+from app.settings import get_settings
 from app.database.models import ImportBatch, Match, MatchSnapshot, ScheduledSignal
 from app.services.excel_parser import ParsedMatch, parse_tournaments_file
 from app.services.signal_rules import analyze_match, build_signal_message

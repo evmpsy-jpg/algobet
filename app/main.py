@@ -5,7 +5,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 
-from app.config import get_settings
+from app.settings import get_settings
 from app.database.session import init_db
 from app.handlers import admin, user
 from app.services.signal_sender import signal_sender_loop

@@ -7,7 +7,7 @@ from datetime import datetime
 from aiogram import Bot
 from sqlalchemy import select
 
-from app.config import get_settings
+from app.settings import get_settings
 from app.database.models import ScheduledSignal, User
 from app.database.session import SessionFactory
 
