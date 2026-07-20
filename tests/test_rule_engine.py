@@ -293,3 +293,30 @@ def test_rejects_when_probabilities_are_missing() -> None:
     assert decision.suitable is False
     assert decision.side is None
     assert "Нет вероятности" in decision.reason
+
+def test_accepts_exactly_five_h2h_games() -> None:
+    decision = evaluate_match(
+        make_match(
+            h2h_games=5,
+            p1_exact=5,
+            p2_exact=0,
+            p2_range=0,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 1
+
+
+def test_accepts_more_than_five_h2h_games() -> None:
+    decision = evaluate_match(
+        make_match(
+            h2h_games=12,
+            p1_exact=5,
+            p2_exact=0,
+            p2_range=0,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 1
