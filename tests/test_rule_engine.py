@@ -105,7 +105,7 @@ def test_selects_side_with_higher_probability_when_both_qualify() -> None:
     assert decision.probability == 92
 
 
-def test_selects_p1_when_probabilities_are_equal() -> None:
+def test_rejects_when_probabilities_are_equal() -> None:
     decision = evaluate_match(
         make_match(
             p1_exact=5,
@@ -115,9 +115,21 @@ def test_selects_p1_when_probabilities_are_equal() -> None:
         )
     )
 
-    assert decision.suitable is True
-    assert decision.side == 1
-    assert decision.probability == 90
+    assert decision.suitable is False
+    assert decision.side is None
+    assert decision.selected_player is None
+    assert decision.probability is None
+    assert "Вероятности игроков равны" in decision.reason
+
+    tie_trace = next(
+        trace
+        for trace in decision.traces
+        if trace.code == "PROBABILITY_TIE"
+    )
+
+    assert tie_trace.passed is False
+    assert "CV=90" in str(tie_trace.actual)
+    assert "CW=90" in str(tie_trace.actual)
 
 
 def test_rejects_match_when_neither_base_condition_passes() -> None:

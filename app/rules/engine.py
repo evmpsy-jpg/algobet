@@ -279,22 +279,47 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             traces=traces,
         )
 
-    # ---------------------------------------------------------
+     # ---------------------------------------------------------
     # Выбор стороны.
     # ---------------------------------------------------------
     if (
         p1_probability_available
         and p2_probability_available
     ):
-        # При равенстве пока сохраняем текущее правило:
-        # выбирается P1.
+        if match.probability_p1 == match.probability_p2:
+            traces.append(
+                _trace(
+                    code="PROBABILITY_TIE",
+                    label="Сравнение вероятностей",
+                    passed=False,
+                    actual=(
+                        f"CV={match.probability_p1}; "
+                        f"CW={match.probability_p2}"
+                    ),
+                    expected="CV и CW должны различаться",
+                )
+            )
+
+            return SignalDecision(
+                suitable=False,
+                reason=(
+                    "Вероятности игроков равны: "
+                    f"CV={match.probability_p1}, "
+                    f"CW={match.probability_p2}. "
+                    "Сигнал не формируется"
+                ),
+                traces=traces,
+            )
+
         side = (
             1
-            if match.probability_p1 >= match.probability_p2
+            if match.probability_p1 > match.probability_p2
             else 2
         )
+
     elif p1_probability_available:
         side = 1
+
     else:
         side = 2
 
