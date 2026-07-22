@@ -14,9 +14,20 @@ from app.settings import get_settings
 from app.database.models import ImportBatch, Match, ScheduledSignal, SignalResult, User, UserAccess
 from app.database.session import SessionFactory
 from app.keyboards.common import main_menu
-from app.services.access import has_signal_access, ensure_trial_access
+from app.services.access import has_analytics_access, has_signal_access, ensure_trial_access
+from app.services.bot_settings import get_analysis_payment_config
+from app.services.match_analysis import create_match_analysis_request, format_analysis_request_admin_text, format_analysis_request_user_text, validate_match_analysis_text
 from app.services.signal_results import format_winrate, result_short_label, summarize_results
 from app.services.stake_calculator import STEP_OPTIONS, format_step_stake_calculator, parse_bank, parse_step
+from app.services.subscriptions import (
+    PLAN_GROUP_LABELS,
+    SUBSCRIPTION_PLANS,
+    create_subscription_request,
+    format_subscription_plan_line,
+    format_subscription_plans_text,
+    format_subscription_request_admin_text,
+    format_subscription_request_user_text,
+)
 
 router = Router(name="user")
 
@@ -24,6 +35,10 @@ router = Router(name="user")
 class CalculatorStates(StatesGroup):
     waiting_for_bank = State()
     waiting_for_step = State()
+
+
+class MatchAnalysisStates(StatesGroup):
+    waiting_for_match = State()
 
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
@@ -135,6 +150,38 @@ def format_public_results(
 
 
 
+def subscription_plans_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for group, label in PLAN_GROUP_LABELS.items():
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"sub:group:{group}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subscription_group_keyboard(group: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for plan in SUBSCRIPTION_PLANS:
+        if plan.group != group:
+            continue
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{plan.description} · {plan.price_rub:,}р".replace(",", " "),
+                callback_data=f"sub:plan:{plan.id}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="⬅️ К тарифам", callback_data="sub:plans")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def format_subscription_group_text(group: str) -> str:
+    title = PLAN_GROUP_LABELS.get(group, "Тарифы")
+    lines = [f"💳 {title}", ""]
+    for plan in SUBSCRIPTION_PLANS:
+        if plan.group == group:
+            lines.append(f"• {format_subscription_plan_line(plan)}")
+    lines.extend(["", "Выберите подходящий вариант."])
+    return "\n".join(lines)
+
+
 def format_subscription_status(user: User | None, access: UserAccess | None, *, is_admin: bool = False) -> str:
     lines = ["💳 Подписка", ""]
     if is_admin:
@@ -163,12 +210,19 @@ def format_subscription_status(user: User | None, access: UserAccess | None, *, 
             lines.append("Пробные сигналы закончились. Для продления напишите администратору.")
     elif access.access_type == "paid":
         until = _fmt_dt(access.active_until, "%d.%m.%Y") if access.active_until else "без даты окончания"
+        plan = next((item for item in SUBSCRIPTION_PLANS if item.id == access.plan_id), None)
+        plan_text = format_subscription_plan_line(plan) if plan else "платный доступ"
+        remaining = "без лимита" if access.signals_remaining is None else str(access.signals_remaining)
         lines.extend([
             "Тип: платный доступ",
+            f"Тариф: {plan_text}",
+            f"Осталось сигналов: {remaining}",
             f"Активен до: {until}",
         ])
+        if access.includes_analytics:
+            lines.append("Аналитика турниров: доступна")
         if not active:
-            lines.append("Срок доступа истёк. Для продления напишите администратору.")
+            lines.append("Срок или лимит доступа закончился. Для продления выберите тариф ниже.")
     else:
         lines.append(f"Тип: {access.access_type}")
     if access.status != "active":
@@ -222,8 +276,22 @@ def format_tournament_analytics(
 
 @router.message(F.text == "📊 Аналитика турниров")
 async def tournament_analytics_handler(message: Message) -> None:
+    if message.from_user is None:
+        return
     now = datetime.utcnow()
+    settings = get_settings()
     async with SessionFactory() as session:
+        row = (await session.execute(
+            select(User, UserAccess)
+            .outerjoin(UserAccess, UserAccess.user_id == User.id)
+            .where(User.telegram_id == message.from_user.id)
+        )).first()
+        if row is None or not has_analytics_access(row[0], row[1], admin_ids=settings.admin_ids, now=now):
+            await message.answer(
+                "📊 Аналитика турниров доступна в тарифе «Всё включено».\n\n"
+                "Откройте 💳 Подписка и выберите подходящий вариант."
+            )
+            return
         latest_import = await session.scalar(select(ImportBatch).order_by(desc(ImportBatch.id)).limit(1))
         total_matches = int(await session.scalar(select(func.count(Match.id))) or 0)
         active_matches = int(await session.scalar(select(func.count(Match.id)).where(Match.is_present_in_latest_import.is_(True))) or 0)
@@ -266,9 +334,71 @@ async def subscription_handler(message: Message) -> None:
         )).first()
     if row is None:
         await message.answer(format_subscription_status(None, None, is_admin=is_admin))
+    else:
+        user, access = row
+        await message.answer(format_subscription_status(user, access, is_admin=is_admin))
+    await message.answer(format_subscription_plans_text(), reply_markup=subscription_plans_keyboard())
+
+@router.callback_query(F.data == "sub:plans")
+async def subscription_plans_callback(callback: CallbackQuery) -> None:
+    if callback.message:
+        await callback.message.edit_text(format_subscription_plans_text(), reply_markup=subscription_plans_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sub:group:"))
+async def subscription_group_callback(callback: CallbackQuery) -> None:
+    if not callback.data:
         return
-    user, access = row
-    await message.answer(format_subscription_status(user, access, is_admin=is_admin))
+    _, _, group = callback.data.split(":")
+    if group not in PLAN_GROUP_LABELS:
+        await callback.answer("Раздел не найден", show_alert=True)
+        return
+    if callback.message:
+        await callback.message.edit_text(format_subscription_group_text(group), reply_markup=subscription_group_keyboard(group))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sub:plan:"))
+async def subscription_plan_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or not callback.data:
+        return
+    _, _, plan_id = callback.data.split(":")
+    settings = get_settings()
+    async with SessionFactory() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
+        if user is None:
+            user = User(
+                telegram_id=callback.from_user.id,
+                username=callback.from_user.username,
+                first_name=callback.from_user.first_name,
+                last_name=callback.from_user.last_name,
+            )
+            session.add(user)
+            await session.flush()
+        else:
+            user.username = callback.from_user.username
+            user.first_name = callback.from_user.first_name
+            user.last_name = callback.from_user.last_name
+            user.is_active = True
+        try:
+            request = await create_subscription_request(session, user, plan_id)
+        except ValueError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        user_text = format_subscription_request_user_text(request)
+        admin_text = format_subscription_request_admin_text(request, user)
+        await session.commit()
+
+    if callback.message:
+        await callback.message.edit_text(user_text)
+    for admin_id in settings.admin_ids:
+        try:
+            await callback.bot.send_message(chat_id=admin_id, text=admin_text)
+        except Exception:
+            pass
+    await callback.answer("Заявка создана", show_alert=True)
+
 
 
 def format_help_information() -> str:
@@ -325,6 +455,62 @@ def calculator_step_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+@router.message(F.text == "🔎 Анализ матча")
+async def match_analysis_handler(message: Message, state: FSMContext) -> None:
+    await state.set_state(MatchAnalysisStates.waiting_for_match)
+    await message.answer(
+        "🔎 Напишите, какой матч хотите проанализировать.\n\n"
+        "Можно указать игроков, турнир, время матча и ссылку, если она есть."
+    )
+
+
+@router.message(MatchAnalysisStates.waiting_for_match)
+async def match_analysis_text_handler(message: Message, state: FSMContext) -> None:
+    if message.from_user is None:
+        return
+    settings = get_settings()
+    try:
+        match_text = validate_match_analysis_text(message.text or "")
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+
+    async with SessionFactory() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
+        if user is None:
+            user = User(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name,
+            )
+            session.add(user)
+            await session.flush()
+        else:
+            user.username = message.from_user.username
+            user.first_name = message.from_user.first_name
+            user.last_name = message.from_user.last_name
+            user.is_active = True
+        payment_config = await get_analysis_payment_config(session)
+        request = await create_match_analysis_request(
+            session,
+            user,
+            match_text,
+            payment_details=payment_config.payment_details,
+            specialist_contact=payment_config.specialist_contact,
+        )
+        user_text = format_analysis_request_user_text(request)
+        admin_text = format_analysis_request_admin_text(request, user)
+        await session.commit()
+
+    await state.clear()
+    await message.answer(user_text)
+    for admin_id in settings.admin_ids:
+        try:
+            await message.bot.send_message(chat_id=admin_id, text=admin_text)
+        except Exception:
+            continue
+
 @router.message(F.text == "🧮 Калькулятор")
 async def calculator_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(CalculatorStates.waiting_for_bank)
@@ -378,7 +564,6 @@ async def calculator_menu_callback(callback: CallbackQuery, state: FSMContext) -
 
 @router.message(F.text.in_({
     "📚 Полезная информация",
-    "🔎 Анализ матча",
 }))
 async def placeholder_handler(message: Message) -> None:
     await message.answer("Раздел подготовлен в меню и будет подключён на следующих этапах.")

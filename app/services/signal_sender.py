@@ -30,6 +30,7 @@ async def _eligible_user_rows(
     *,
     admin_ids: list[int],
     now: datetime,
+    signal_payload: dict | None = None,
 ) -> list[tuple[User, UserAccess | None]]:
     rows = list(
         (
@@ -43,7 +44,7 @@ async def _eligible_user_rows(
     return [
         (user, access)
         for user, access in rows
-        if has_signal_access(user, access, admin_ids=admin_ids, now=now)
+        if has_signal_access(user, access, admin_ids=admin_ids, now=now, signal_payload=signal_payload)
     ]
 
 
@@ -78,25 +79,28 @@ async def _process_signals(
     if not signals:
         return summary
 
-    eligible_users = await _eligible_user_rows(session, admin_ids=admin_ids, now=now_utc)
-
     for signal in signals:
         summary.processed_signals += 1
         if signal.status == "cancelled":
-            summary.skipped_users += len(eligible_users)
             continue
         if not signal.message_text:
             signal.status = "cancelled"
             signal.cancel_reason = "Не сформирован текст сигнала"
             continue
 
+        eligible_users = await _eligible_user_rows(
+            session,
+            admin_ids=admin_ids,
+            now=now_utc,
+            signal_payload=signal.signal_payload,
+        )
         previous_status = signal.status
         signal.status = "ready"
         sent_for_signal = 0
         failed_for_signal = 0
 
         for user, access in eligible_users:
-            if not has_signal_access(user, access, admin_ids=admin_ids, now=now_utc):
+            if not has_signal_access(user, access, admin_ids=admin_ids, now=now_utc, signal_payload=signal.signal_payload):
                 summary.skipped_users += 1
                 continue
             delivery = await _get_delivery(session, signal, user)
@@ -120,7 +124,7 @@ async def _process_signals(
             else:
                 delivery.status = "sent"
                 delivery.sent_at = now_utc
-                consume_signal_access(user, access, admin_ids=admin_ids)
+                consume_signal_access(user, access, admin_ids=admin_ids, signal_payload=signal.signal_payload)
                 sent_for_signal += 1
                 summary.sent_deliveries += 1
 

@@ -11,6 +11,16 @@ class Base(DeclarativeBase):
     pass
 
 
+class BotSetting(Base):
+    __tablename__ = "bot_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    value: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -25,6 +35,8 @@ class User(Base):
 
     access: Mapped["UserAccess | None"] = relationship(back_populates="user", uselist=False)
     deliveries: Mapped[list["SignalDelivery"]] = relationship(back_populates="user")
+    analysis_requests: Mapped[list["MatchAnalysisRequest"]] = relationship(back_populates="user")
+    subscription_requests: Mapped[list["SubscriptionRequest"]] = relationship(back_populates="user")
 
 
 class UserAccess(Base):
@@ -35,12 +47,62 @@ class UserAccess(Base):
     access_type: Mapped[str] = mapped_column(String(30), default="trial", index=True)
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
     free_signals_remaining: Mapped[int] = mapped_column(Integer, default=3)
+    signals_remaining: Mapped[int | None] = mapped_column(Integer)
+    plan_id: Mapped[str | None] = mapped_column(String(50), index=True)
+    plan_group: Mapped[str | None] = mapped_column(String(30), index=True)
+    includes_vip: Mapped[bool] = mapped_column(Boolean, default=False)
+    includes_all_signals: Mapped[bool] = mapped_column(Boolean, default=False)
+    includes_analytics: Mapped[bool] = mapped_column(Boolean, default=False)
     active_until: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user: Mapped[User] = relationship(back_populates="access")
 
+
+
+class SubscriptionRequest(Base):
+    __tablename__ = "subscription_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    username: Mapped[str | None] = mapped_column(String(255))
+    plan_id: Mapped[str] = mapped_column(String(50), index=True)
+    plan_group: Mapped[str] = mapped_column(String(30), index=True)
+    plan_title: Mapped[str] = mapped_column(String(100))
+    plan_description: Mapped[str] = mapped_column(String(255))
+    price_rub: Mapped[int] = mapped_column(Integer)
+    signals_limit: Mapped[int | None] = mapped_column(Integer)
+    duration_days: Mapped[int | None] = mapped_column(Integer)
+    duration_hours: Mapped[int | None] = mapped_column(Integer)
+    includes_vip: Mapped[bool] = mapped_column(Boolean, default=False)
+    includes_all_signals: Mapped[bool] = mapped_column(Boolean, default=False)
+    includes_analytics: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    payment_details: Mapped[str | None] = mapped_column(Text)
+    specialist_contact: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user: Mapped[User] = relationship(back_populates="subscription_requests")
+
+
+class MatchAnalysisRequest(Base):
+    __tablename__ = "match_analysis_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    username: Mapped[str | None] = mapped_column(String(255))
+    match_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    payment_details: Mapped[str | None] = mapped_column(Text)
+    specialist_contact: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user: Mapped[User] = relationship(back_populates="analysis_requests")
 
 class ImportBatch(Base):
     __tablename__ = "import_batches"

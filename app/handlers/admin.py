@@ -12,10 +12,16 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import desc, func, or_, select
 
 from app.settings import get_settings
-from app.database.models import ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, SignalResult, User, UserAccess
+from app.database.models import ImportBatch, Match, MatchAnalysisRequest, ScheduledSignal, SignalDecisionLog, SignalDelivery, SignalResult, SubscriptionRequest, User, UserAccess
 from app.database.session import SessionFactory
 from app.keyboards.common import admin_menu
-from app.services.access import disable_access, grant_paid_access, grant_trial_access
+from app.services.access import disable_access, grant_paid_access, grant_subscription_access, grant_trial_access
+from app.services.bot_settings import (
+    ANALYSIS_PAYMENT_DETAILS_KEY,
+    ANALYSIS_SPECIALIST_CONTACT_KEY,
+    get_analysis_payment_config,
+    set_bot_setting,
+)
 from app.services.decision_log import record_decision_log
 from app.services.excel_parser import ParsedMatch
 from app.services.import_service import import_tournaments
@@ -23,6 +29,7 @@ from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
 from app.services.signal_results import LEVEL_ORDER, auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, summarize_results
+from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price
 
 router = Router(name="admin")
 PAGE_SIZE = 8
@@ -34,9 +41,23 @@ STATUS_LABELS = {
     "cancelled": "❌ Отменённые",
 }
 
+ANALYSIS_STATUS_LABELS = {
+    "new": "🆕 Новые",
+    "paid": "💳 Оплаченные",
+    "in_progress": "🛠 В работе",
+    "done": "✅ Готовые",
+    "cancelled": "❌ Отменённые",
+}
+ANALYSIS_STATUS_ORDER = tuple(ANALYSIS_STATUS_LABELS)
+
 
 class UploadStates(StatesGroup):
     waiting_for_file = State()
+
+
+class AdminSettingsStates(StatesGroup):
+    waiting_for_analysis_payment_details = State()
+    waiting_for_analysis_specialist_contact = State()
 
 
 def is_admin_user(user_id: int | None) -> bool:
@@ -841,8 +862,332 @@ def _access_label(access: UserAccess | None) -> str:
         return f"trial · осталось {access.free_signals_remaining}"
     if access.access_type == "paid":
         until = f" до {access.active_until:%d.%m.%Y}" if access.active_until else ""
+        if access.plan_id:
+            remaining = "∞" if access.signals_remaining is None else str(access.signals_remaining)
+            return f"paid · {access.plan_id} · осталось {remaining}{until}"
         return f"paid{until}"
     return access.access_type
+
+
+def _subscription_status_label(status: str | None) -> str:
+    return SUBSCRIPTION_STATUS_LABELS.get(status or "", status or "—")
+
+
+def subscription_requests_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"{label} ({counts.get(status, 0)})", callback_data=f"subadm:list:{status}:0")]
+        for status, label in SUBSCRIPTION_STATUS_LABELS.items()
+    ]
+    rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="subadm:dashboard")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subscription_requests_list_keyboard(
+    items: list[tuple[SubscriptionRequest, User | None]],
+    status: str,
+    page: int,
+    total: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for request, user in items:
+        name = _user_name(user) if user else (request.username or str(request.telegram_id))
+        created = _fmt_dt(request.created_at, "%d.%m %H:%M")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"#{request.id} · {created} · {request.plan_title} · {name}",
+                callback_data=f"subadm:view:{request.id}:{status}:{page}",
+            )
+        ])
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"subadm:list:{status}:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"subadm:list:{status}:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ К заявкам", callback_data="subadm:dashboard")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subscription_request_detail_keyboard(request_id: int, current_status: str, list_status: str, page: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    status_buttons: list[InlineKeyboardButton] = []
+    for status, label in SUBSCRIPTION_STATUS_LABELS.items():
+        if status == current_status:
+            continue
+        status_buttons.append(InlineKeyboardButton(
+            text=label,
+            callback_data=f"subadm:status:{request_id}:{status}:{list_status}:{page}",
+        ))
+        if len(status_buttons) == 2:
+            rows.append(status_buttons)
+            status_buttons = []
+    if status_buttons:
+        rows.append(status_buttons)
+    rows.append([InlineKeyboardButton(text="⬅️ К списку", callback_data=f"subadm:list:{list_status}:{page}")])
+    rows.append([InlineKeyboardButton(text="⬅️ К заявкам", callback_data="subadm:dashboard")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def format_subscription_request_detail(request: SubscriptionRequest, user: User | None) -> str:
+    username = f"@{request.username}" if request.username else "—"
+    name = _user_name(user) if user else (request.username or "—")
+    included = []
+    if request.includes_vip:
+        included.append("VIP")
+    if request.includes_all_signals:
+        included.append("все сигналы")
+    if request.includes_analytics:
+        included.append("аналитика")
+    included_text = ", ".join(included) if included else "—"
+    period_value = request.duration_days or request.duration_hours
+    period_unit = "дней" if request.duration_days else "часов" if request.duration_hours else ""
+    period_text = f"{period_value} {period_unit}" if period_value else "—"
+    return (
+        f"💳 Заявка на подписку #{request.id}\n\n"
+        f"Статус: {_subscription_status_label(request.status)}\n"
+        f"Создана: {_fmt_dt(request.created_at)}\n"
+        f"Обновлена: {_fmt_dt(request.updated_at)}\n\n"
+        f"Пользователь: {name}\n"
+        f"Telegram ID: {request.telegram_id}\n"
+        f"Username: {username}\n\n"
+        f"Тариф: {request.plan_title}\n"
+        f"Условия: {request.plan_description}\n"
+        f"Стоимость: {format_price(request.price_rub)}\n"
+        f"Лимит сигналов: {request.signals_limit or '—'}\n"
+        f"Период: {period_text}\n"
+        f"Включено: {included_text}\n\n"
+        f"Реквизиты: {request.payment_details or '—'}\n"
+        f"Контакт: {request.specialist_contact or '—'}"
+    )
+
+
+async def show_subscription_requests_dashboard(target: Message | CallbackQuery) -> None:
+    async with SessionFactory() as session:
+        rows = (await session.execute(
+            select(SubscriptionRequest.status, func.count(SubscriptionRequest.id)).group_by(SubscriptionRequest.status)
+        )).all()
+    counts = {status: int(count) for status, count in rows}
+    total = sum(counts.values())
+    text = (
+        "💳 Заявки на подписку\n\n"
+        f"Всего: {total}\n"
+        "Выберите статус, чтобы открыть список заявок."
+    )
+    markup = subscription_requests_dashboard_keyboard(counts)
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+async def show_subscription_requests_list(target: CallbackQuery | Message, status: str, page: int = 0) -> None:
+    page = max(0, page)
+    if status not in SUBSCRIPTION_STATUS_LABELS:
+        if isinstance(target, CallbackQuery):
+            await target.answer("Неизвестный статус", show_alert=True)
+        return
+    async with SessionFactory() as session:
+        total = int(await session.scalar(
+            select(func.count(SubscriptionRequest.id)).where(SubscriptionRequest.status == status)
+        ) or 0)
+        rows = list((await session.execute(
+            select(SubscriptionRequest, User)
+            .outerjoin(User, User.id == SubscriptionRequest.user_id)
+            .where(SubscriptionRequest.status == status)
+            .order_by(desc(SubscriptionRequest.created_at))
+            .offset(page * PAGE_SIZE)
+            .limit(PAGE_SIZE)
+        )).all())
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    text = (
+        f"💳 Заявки на подписку: {_subscription_status_label(status)}\n\n"
+        f"Всего: {total}\n"
+        f"Страница {page + 1} из {pages}."
+    )
+    markup = subscription_requests_list_keyboard(rows, status, page, total)
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+async def show_subscription_request_detail(callback: CallbackQuery, request_id: int, list_status: str, page: int) -> None:
+    if not callback.message:
+        return
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            select(SubscriptionRequest, User)
+            .outerjoin(User, User.id == SubscriptionRequest.user_id)
+            .where(SubscriptionRequest.id == request_id)
+        )).first()
+    if row is None:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+    request, user = row
+    await callback.message.edit_text(
+        format_subscription_request_detail(request, user),
+        reply_markup=subscription_request_detail_keyboard(request.id, request.status, list_status, page),
+    )
+    await callback.answer()
+
+
+def _analysis_status_label(status: str | None) -> str:
+    return ANALYSIS_STATUS_LABELS.get(status or "", status or "—")
+
+
+def analysis_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"{label} ({counts.get(status, 0)})", callback_data=f"an:list:{status}:0")]
+        for status, label in ANALYSIS_STATUS_LABELS.items()
+    ]
+    rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="an:dashboard")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def analysis_list_keyboard(
+    items: list[tuple[MatchAnalysisRequest, User | None]],
+    status: str,
+    page: int,
+    total: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for request, user in items:
+        name = _user_name(user) if user else (request.username or str(request.telegram_id))
+        created = _fmt_dt(request.created_at, "%d.%m %H:%M")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"#{request.id} · {created} · {name}",
+                callback_data=f"an:view:{request.id}:{status}:{page}",
+            )
+        ])
+
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"an:list:{status}:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"an:list:{status}:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ К заявкам", callback_data="an:dashboard")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def analysis_detail_keyboard(request_id: int, current_status: str, list_status: str, page: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    status_buttons: list[InlineKeyboardButton] = []
+    for status, label in ANALYSIS_STATUS_LABELS.items():
+        if status == current_status:
+            continue
+        status_buttons.append(InlineKeyboardButton(
+            text=label,
+            callback_data=f"an:status:{request_id}:{status}:{list_status}:{page}",
+        ))
+        if len(status_buttons) == 2:
+            rows.append(status_buttons)
+            status_buttons = []
+    if status_buttons:
+        rows.append(status_buttons)
+    rows.append([InlineKeyboardButton(text="⬅️ К списку", callback_data=f"an:list:{list_status}:{page}")])
+    rows.append([InlineKeyboardButton(text="⬅️ К заявкам", callback_data="an:dashboard")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def format_analysis_request_detail(request: MatchAnalysisRequest, user: User | None) -> str:
+    username = f"@{request.username}" if request.username else "—"
+    name = _user_name(user) if user else (request.username or "—")
+    return (
+        f"🔎 Заявка на анализ #{request.id}\n\n"
+        f"Статус: {_analysis_status_label(request.status)}\n"
+        f"Создана: {_fmt_dt(request.created_at)}\n"
+        f"Обновлена: {_fmt_dt(request.updated_at)}\n\n"
+        f"Пользователь: {name}\n"
+        f"Telegram ID: {request.telegram_id}\n"
+        f"Username: {username}\n\n"
+        f"Матч:\n{request.match_text}\n\n"
+        f"Реквизиты: {request.payment_details or '—'}\n"
+        f"Специалист: {request.specialist_contact or '—'}"
+    )
+
+
+async def show_analysis_dashboard(target: Message | CallbackQuery) -> None:
+    async with SessionFactory() as session:
+        rows = (await session.execute(
+            select(MatchAnalysisRequest.status, func.count(MatchAnalysisRequest.id)).group_by(MatchAnalysisRequest.status)
+        )).all()
+    counts = {status: int(count) for status, count in rows}
+    total = sum(counts.values())
+    text = (
+        "🔎 Заявки на анализ\n\n"
+        f"Всего: {total}\n"
+        "Выберите статус, чтобы открыть список заявок."
+    )
+    markup = analysis_dashboard_keyboard(counts)
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+async def show_analysis_list(target: CallbackQuery | Message, status: str, page: int = 0) -> None:
+    page = max(0, page)
+    if status not in ANALYSIS_STATUS_LABELS:
+        if isinstance(target, CallbackQuery):
+            await target.answer("Неизвестный статус", show_alert=True)
+        return
+
+    async with SessionFactory() as session:
+        total = int(await session.scalar(
+            select(func.count(MatchAnalysisRequest.id)).where(MatchAnalysisRequest.status == status)
+        ) or 0)
+        rows = list((await session.execute(
+            select(MatchAnalysisRequest, User)
+            .outerjoin(User, User.id == MatchAnalysisRequest.user_id)
+            .where(MatchAnalysisRequest.status == status)
+            .order_by(desc(MatchAnalysisRequest.created_at))
+            .offset(page * PAGE_SIZE)
+            .limit(PAGE_SIZE)
+        )).all())
+
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    text = (
+        f"🔎 Заявки на анализ: {_analysis_status_label(status)}\n\n"
+        f"Всего: {total}\n"
+        f"Страница {page + 1} из {pages}."
+    )
+    markup = analysis_list_keyboard(rows, status, page, total)
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+async def show_analysis_detail(callback: CallbackQuery, request_id: int, list_status: str, page: int) -> None:
+    if not callback.message:
+        return
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            select(MatchAnalysisRequest, User)
+            .outerjoin(User, User.id == MatchAnalysisRequest.user_id)
+            .where(MatchAnalysisRequest.id == request_id)
+        )).first()
+    if row is None:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+    request, user = row
+    await callback.message.edit_text(
+        format_analysis_request_detail(request, user),
+        reply_markup=analysis_detail_keyboard(request.id, request.status, list_status, page),
+    )
+    await callback.answer()
 
 
 def users_list_keyboard(items: list[tuple[User, UserAccess | None]], page: int, total: int) -> InlineKeyboardMarkup:
@@ -942,6 +1287,114 @@ async def show_user_detail(callback: CallbackQuery, user_id: int, page: int) -> 
         reply_markup=user_detail_keyboard(user_id, page),
     )
     await callback.answer()
+@router.message(F.text == "💳 Заявки на подписку")
+async def subscription_requests_info(message: Message) -> None:
+    if not is_admin(message):
+        return
+    await show_subscription_requests_dashboard(message)
+
+
+@router.callback_query(F.data == "subadm:dashboard")
+async def subscription_requests_dashboard_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await show_subscription_requests_dashboard(callback)
+
+
+@router.callback_query(F.data.startswith("subadm:list:"))
+async def subscription_requests_list_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, status, page_raw = callback.data.split(":")
+    await show_subscription_requests_list(callback, status, int(page_raw))
+
+
+@router.callback_query(F.data.startswith("subadm:view:"))
+async def subscription_request_view_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, request_id_raw, status, page_raw = callback.data.split(":")
+    await show_subscription_request_detail(callback, int(request_id_raw), status, int(page_raw))
+
+
+@router.callback_query(F.data.startswith("subadm:status:"))
+async def subscription_request_status_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, request_id_raw, new_status, list_status, page_raw = callback.data.split(":")
+    if new_status not in SUBSCRIPTION_STATUS_LABELS:
+        await callback.answer("Неизвестный статус", show_alert=True)
+        return
+    request_id = int(request_id_raw)
+    page = int(page_raw)
+    async with SessionFactory() as session:
+        request = await session.get(SubscriptionRequest, request_id)
+        if request is None:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        request.status = new_status
+        request.updated_at = datetime.utcnow()
+        if new_status in {"paid", "done"}:
+            user = await session.get(User, request.user_id)
+            if user is not None:
+                await grant_subscription_access(session, user, request)
+        await session.commit()
+    await callback.answer(f"Статус изменён: {_subscription_status_label(new_status)}", show_alert=True)
+    await show_subscription_request_detail(callback, request_id, list_status, page)
+
+
+@router.message(F.text == "🔎 Заявки на анализ")
+async def analysis_requests_info(message: Message) -> None:
+    if not is_admin(message):
+        return
+    await show_analysis_dashboard(message)
+
+
+@router.callback_query(F.data == "an:dashboard")
+async def analysis_dashboard_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await show_analysis_dashboard(callback)
+
+
+@router.callback_query(F.data.startswith("an:list:"))
+async def analysis_list_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, status, page_raw = callback.data.split(":")
+    await show_analysis_list(callback, status, int(page_raw))
+
+
+@router.callback_query(F.data.startswith("an:view:"))
+async def analysis_view_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, request_id_raw, status, page_raw = callback.data.split(":")
+    await show_analysis_detail(callback, int(request_id_raw), status, int(page_raw))
+
+
+@router.callback_query(F.data.startswith("an:status:"))
+async def analysis_status_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, request_id_raw, new_status, list_status, page_raw = callback.data.split(":")
+    if new_status not in ANALYSIS_STATUS_LABELS:
+        await callback.answer("Неизвестный статус", show_alert=True)
+        return
+    request_id = int(request_id_raw)
+    page = int(page_raw)
+    async with SessionFactory() as session:
+        request = await session.get(MatchAnalysisRequest, request_id)
+        if request is None:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        request.status = new_status
+        request.updated_at = datetime.utcnow()
+        await session.commit()
+    await callback.answer(f"Статус изменён: {_analysis_status_label(new_status)}", show_alert=True)
+    await show_analysis_detail(callback, request_id, list_status, page)
+
+
 @router.message(F.text == "👥 Пользователи")
 async def users_info(message: Message) -> None:
     if not is_admin(message):
@@ -1015,15 +1468,18 @@ async def user_disable_access_callback(callback: CallbackQuery) -> None:
     await callback.answer("Доступ отключён", show_alert=True)
     await show_user_detail(callback, user_id, page)
 
-@router.message(F.text == "⚙️ Настройки")
-async def settings_info(message: Message) -> None:
-    if not is_admin(message):
-        return
-    settings = get_settings()
-    rules = reload_signal_rules()
+def admin_settings_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Изменить реквизиты анализа", callback_data="admset:analysis_payment")],
+        [InlineKeyboardButton(text="👤 Изменить контакт специалиста", callback_data="admset:analysis_contact")],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="admset:refresh")],
+    ])
+
+
+def format_admin_settings_text(settings, rules: dict, payment_details: str, specialist_contact: str) -> str:
     signal = rules["signal"]
     high = rules["high_confidence"]
-    await message.answer(
+    return (
         "⚙️ Настройки\n\n"
         f"Часовой пояс: {settings.timezone}\n"
         f"Отправка до матча: {signal['lead_minutes']} минут\n"
@@ -1034,5 +1490,100 @@ async def settings_info(message: Message) -> None:
         f"ЖБ-сигнал от: {high['min_probability']}%\n"
         f"Проверка очереди: каждые {settings.scheduler_interval_seconds} секунд\n"
         f"Максимальный Excel: {settings.max_upload_mb} МБ\n\n"
-        "Значения читаются из signal_rules.yaml. После изменения файла повторно откройте этот раздел и загрузите Excel заново."
+        "🔎 Анализ матча\n"
+        f"Реквизиты: {payment_details}\n"
+        f"Контакт специалиста: {specialist_contact}\n\n"
+        "Правила сигналов читаются из signal_rules.yaml. Реквизиты и контакт анализа можно менять кнопками ниже."
     )
+
+
+async def show_admin_settings(target: Message | CallbackQuery) -> None:
+    settings = get_settings()
+    rules = reload_signal_rules()
+    async with SessionFactory() as session:
+        analysis_config = await get_analysis_payment_config(session)
+    text = format_admin_settings_text(
+        settings,
+        rules,
+        analysis_config.payment_details,
+        analysis_config.specialist_contact,
+    )
+    markup = admin_settings_keyboard()
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == "⚙️ Настройки")
+async def settings_info(message: Message) -> None:
+    if not is_admin(message):
+        return
+    await show_admin_settings(message)
+
+
+@router.callback_query(F.data == "admset:refresh")
+async def admin_settings_refresh_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await show_admin_settings(callback)
+
+
+@router.callback_query(F.data == "admset:analysis_payment")
+async def admin_edit_analysis_payment_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await state.set_state(AdminSettingsStates.waiting_for_analysis_payment_details)
+    if callback.message:
+        await callback.message.answer(
+            "Напишите новые реквизиты для оплаты анализа матча.\n\n"
+            "Они будут показаны пользователю после создания заявки."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admset:analysis_contact")
+async def admin_edit_analysis_contact_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await state.set_state(AdminSettingsStates.waiting_for_analysis_specialist_contact)
+    if callback.message:
+        await callback.message.answer(
+            "Напишите контакт специалиста для анализа матча.\n\n"
+            "Например: @username или номер телефона."
+        )
+    await callback.answer()
+
+
+@router.message(AdminSettingsStates.waiting_for_analysis_payment_details)
+async def admin_save_analysis_payment(message: Message, state: FSMContext) -> None:
+    if not is_admin(message):
+        return
+    try:
+        async with SessionFactory() as session:
+            await set_bot_setting(session, ANALYSIS_PAYMENT_DETAILS_KEY, message.text or "", max_length=2000)
+            await session.commit()
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    await state.clear()
+    await message.answer("Реквизиты для анализа обновлены.")
+    await show_admin_settings(message)
+
+
+@router.message(AdminSettingsStates.waiting_for_analysis_specialist_contact)
+async def admin_save_analysis_contact(message: Message, state: FSMContext) -> None:
+    if not is_admin(message):
+        return
+    try:
+        async with SessionFactory() as session:
+            await set_bot_setting(session, ANALYSIS_SPECIALIST_CONTACT_KEY, message.text or "", max_length=255)
+            await session.commit()
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    await state.clear()
+    await message.answer("Контакт специалиста обновлён.")
+    await show_admin_settings(message)

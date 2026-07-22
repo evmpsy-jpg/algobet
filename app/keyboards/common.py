@@ -18,8 +18,9 @@ def admin_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📥 Импорт Excel"), KeyboardButton(text="📊 Сигналы")],
             [KeyboardButton(text="📤 История отправок"), KeyboardButton(text="📈 Статистика")],
-            [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="⚙️ Настройки")],
-            [KeyboardButton(text="📋 Последняя загрузка")],
+            [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="🔎 Заявки на анализ")],
+            [KeyboardButton(text="💳 Заявки на подписку")],
+            [KeyboardButton(text="📋 Последняя загрузка"), KeyboardButton(text="⚙️ Настройки")],
             [KeyboardButton(text="⬅️ Главное меню")],
         ],
         resize_keyboard=True,

@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     signal_lead_minutes: int = Field(default=20, alias="SIGNAL_LEAD_MINUTES")
     scheduler_interval_seconds: int = Field(default=30, alias="SCHEDULER_INTERVAL_SECONDS")
     max_upload_mb: int = Field(default=25, alias="MAX_UPLOAD_MB")
+    analysis_payment_details: str = Field(default="Реквизиты для оплаты уточните у специалиста.", alias="ANALYSIS_PAYMENT_DETAILS")
+    analysis_specialist_contact: str = Field(default="@your_specialist", alias="ANALYSIS_SPECIALIST_CONTACT")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
