@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from aiogram import F, Router
@@ -11,13 +12,16 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import desc, func, select
 
 from app.settings import get_settings
-from app.database.models import ImportBatch, Match, ScheduledSignal, User
+from app.database.models import ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, User, UserAccess
 from app.database.session import SessionFactory
 from app.keyboards.common import admin_menu
+from app.services.access import disable_access, grant_paid_access, grant_trial_access
+from app.services.decision_log import record_decision_log
 from app.services.excel_parser import ParsedMatch
 from app.services.import_service import import_tournaments
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
+from app.services.signal_sender import process_signal_now
 
 router = Router(name="admin")
 PAGE_SIZE = 8
@@ -42,6 +46,19 @@ def is_admin(message: Message) -> bool:
     return is_admin_user(message.from_user.id if message.from_user else None)
 
 
+
+
+def _local_dt(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(ZoneInfo(get_settings().timezone))
+
+
+def _fmt_dt(value: datetime | None, fmt: str = "%d.%m.%Y %H:%M") -> str:
+    local = _local_dt(value)
+    return local.strftime(fmt) if local else "—"
 def signals_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=f"🟢 Запланированные ({counts.get('scheduled', 0)})", callback_data="sig:list:scheduled:0")],
@@ -77,16 +94,96 @@ def signal_list_keyboard(items: list[tuple[ScheduledSignal, Match]], status: str
 
 def signal_detail_keyboard(signal_id: int, status: str, page: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    rows.append([InlineKeyboardButton(text="🧾 Трассировка решения", callback_data=f"sig:trace:{signal_id}:{status}:{page}")])
+    rows.append([InlineKeyboardButton(text="📬 Доставки", callback_data=f"sig:deliveries:{signal_id}:{status}:{page}")])
     if status in {"scheduled", "ready"}:
         rows.append([InlineKeyboardButton(text="📨 Отправить себе сейчас", callback_data=f"sig:preview:{signal_id}:{status}:{page}")])
+        rows.append([InlineKeyboardButton(text="🚀 Отправить пользователям сейчас", callback_data=f"sig:sendnow:{signal_id}:{status}:{page}")])
         rows.append([
             InlineKeyboardButton(text="❌ Отменить", callback_data=f"sig:cancel:{signal_id}:{status}:{page}"),
             InlineKeyboardButton(text="🔄 Пересчитать", callback_data=f"sig:recalc:{signal_id}:{status}:{page}"),
         ])
+    elif status == "sent":
+        rows.append([InlineKeyboardButton(text="🔁 Повторить failed/missing", callback_data=f"sig:sendnow:{signal_id}:{status}:{page}")])
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"sig:list:{status}:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+def format_decision_log(log: SignalDecisionLog, match: Match) -> str:
+    status = "подходит" if log.suitable else "отклонён"
+    side = f"П{log.side}" if log.side in (1, 2) else "—"
+    probability = f"{log.probability:g}%" if log.probability is not None else "—"
+    lines = [
+        "🧾 Трассировка решения",
+        "",
+        f"Матч: {match.player_1} — {match.player_2}",
+        f"Время: {match.tournament_date} {match.match_time}",
+        f"Версия: {log.algorithm_version}",
+        f"Источник: {log.source}",
+        f"Итог: {status}",
+        f"Сторона: {side}",
+        f"Вероятность: {probability}",
+        f"Уровень: {log.level or '—'}",
+    ]
+    if log.reason:
+        lines.extend(["", f"Причина: {log.reason}"])
+    lines.append("")
+    lines.append("Проверки:")
+    for item in (log.decision_trace or [])[:20]:
+        mark = "✅" if item.get("passed") else "❌"
+        label = item.get("label") or item.get("code") or "Правило"
+        actual = item.get("actual")
+        expected = item.get("expected")
+        side_text = f" П{item.get('side')}" if item.get("side") in (1, 2) else ""
+        lines.append(f"{mark}{side_text} {label}: {actual} / нужно {expected}")
+    return "\n".join(lines)[:3900]
 
+
+
+def _delivery_status_label(status: str) -> str:
+    labels = {
+        "pending": "ожидает",
+        "sent": "отправлено",
+        "failed": "ошибка",
+    }
+    return labels.get(status, status)
+
+
+def format_signal_deliveries(
+    signal: ScheduledSignal,
+    match: Match,
+    rows: list[tuple[SignalDelivery, User | None]],
+) -> str:
+    counts: dict[str, int] = {}
+    for delivery, _ in rows:
+        counts[delivery.status] = counts.get(delivery.status, 0) + 1
+    lines = [
+        "📬 Доставки сигнала",
+        "",
+        f"Матч: {match.player_1} — {match.player_2}",
+        f"Время сигнала: {_fmt_dt(signal.send_at)}",
+        f"Статус сигнала: {signal.status}",
+        "",
+        f"Всего доставок: {len(rows)}",
+        f"Отправлено: {counts.get('sent', 0)}",
+        f"Ошибок: {counts.get('failed', 0)}",
+        f"Ожидает: {counts.get('pending', 0)}",
+    ]
+    if not rows:
+        lines.extend(["", "Доставок по этому сигналу пока нет."])
+        return "\n".join(lines)
+    lines.append("")
+    lines.append("Последние доставки:")
+    for delivery, user in rows[:25]:
+        name = _user_name(user) if user else str(delivery.telegram_id)
+        sent_at = _fmt_dt(delivery.sent_at, "%d.%m %H:%M")
+        lines.append(
+            f"• {name} · {delivery.telegram_id} · "
+            f"{_delivery_status_label(delivery.status)} · {sent_at}"
+        )
+        if delivery.error_text:
+            error = delivery.error_text.replace("\n", " ")[:240]
+            lines.append(f"  Ошибка: {error}")
+    return "\n".join(lines)[:3900]
 async def get_signal_counts() -> dict[str, int]:
     async with SessionFactory() as session:
         rows = (await session.execute(
@@ -239,6 +336,69 @@ async def signal_view_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+
+@router.callback_query(F.data.startswith("sig:trace:"))
+async def signal_trace_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
+        return
+    _, _, signal_id_raw, status, page_raw = callback.data.split(":")
+    signal_id, page = int(signal_id_raw), int(page_raw)
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            select(ScheduledSignal, Match).join(Match, Match.id == ScheduledSignal.match_id)
+            .where(ScheduledSignal.id == signal_id)
+        )).first()
+        if row is None:
+            await callback.answer("Сигнал не найден", show_alert=True)
+            return
+        signal, match = row
+        log = await session.scalar(
+            select(SignalDecisionLog)
+            .where(SignalDecisionLog.match_id == match.id)
+            .order_by(desc(SignalDecisionLog.id))
+            .limit(1)
+        )
+    if log is None:
+        await callback.answer("Трассировка ещё не записана", show_alert=True)
+        return
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ К сигналу", callback_data=f"sig:view:{signal_id}:{status}:{page}")],
+    ])
+    await callback.message.edit_text(format_decision_log(log, match), reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sig:deliveries:"))
+async def signal_deliveries_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
+        return
+    _, _, signal_id_raw, status, page_raw = callback.data.split(":")
+    signal_id, page = int(signal_id_raw), int(page_raw)
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            select(ScheduledSignal, Match)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .where(ScheduledSignal.id == signal_id)
+        )).first()
+        if row is None:
+            await callback.answer("Сигнал не найден", show_alert=True)
+            return
+        signal, match = row
+        deliveries = list((await session.execute(
+            select(SignalDelivery, User)
+            .outerjoin(User, User.id == SignalDelivery.user_id)
+            .where(SignalDelivery.signal_id == signal.id)
+            .order_by(desc(SignalDelivery.id))
+            .limit(25)
+        )).all())
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ К сигналу", callback_data=f"sig:view:{signal_id}:{status}:{page}")],
+    ])
+    await callback.message.edit_text(
+        format_signal_deliveries(signal, match, deliveries),
+        reply_markup=markup,
+    )
+    await callback.answer()
 @router.callback_query(F.data.startswith("sig:preview:"))
 async def signal_preview_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
@@ -253,6 +413,31 @@ async def signal_preview_callback(callback: CallbackQuery) -> None:
     await callback.answer("Отправлено вам. Статус сигнала не изменён.")
 
 
+
+@router.callback_query(F.data.startswith("sig:sendnow:"))
+async def signal_send_now_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
+        return
+    _, _, signal_id_raw, status, page_raw = callback.data.split(":")
+    signal_id, page = int(signal_id_raw), int(page_raw)
+    async with SessionFactory() as session:
+        signal = await session.get(ScheduledSignal, signal_id)
+        if signal is None:
+            await callback.answer("Сигнал не найден", show_alert=True)
+            return
+        if signal.status == "cancelled":
+            await callback.answer("Отменённый сигнал нельзя отправить", show_alert=True)
+            return
+        summary = await process_signal_now(callback.message.bot, session, signal_id)
+    await callback.answer(
+        "Доставка завершена: "
+        f"отправлено {summary.sent_deliveries}, "
+        f"ошибок {summary.failed_deliveries}, "
+        f"пропущено {summary.skipped_users}",
+        show_alert=True,
+    )
+    callback.data = f"sig:deliveries:{signal_id}:{status}:{page}"
+    await signal_deliveries_callback(callback)
 @router.callback_query(F.data.startswith("sig:cancel:"))
 async def signal_cancel_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
@@ -304,6 +489,13 @@ async def signal_recalc_callback(callback: CallbackQuery) -> None:
             raw_data=raw,
         )
         decision = analyze_match(parsed)
+        await record_decision_log(
+            session,
+            match_id=match.id,
+            decision=decision,
+            import_batch_id=match.current_import_id,
+            source="manual_recalc",
+        )
         if decision.suitable:
             signal.status = "scheduled"
             lead_minutes = int(get_signal_rules()["signal"].get("lead_minutes", settings.signal_lead_minutes))
@@ -335,7 +527,7 @@ async def latest_import(message: Message) -> None:
         return
     await message.answer(
         f"Последняя загрузка: {batch.file_name}\nСтатус: {batch.status}\nМатчей: {batch.parsed_matches}\n"
-        f"Новых: {batch.inserted_matches}\nОбновлено: {batch.updated_matches}\nДата: {batch.created_at:%d.%m.%Y %H:%M:%S}"
+        f"Новых: {batch.inserted_matches}\nОбновлено: {batch.updated_matches}\nДата: {_fmt_dt(batch.created_at, '%d.%m.%Y %H:%M:%S')}"
     )
 
 
@@ -346,12 +538,18 @@ async def sent_history(message: Message) -> None:
     async with SessionFactory() as session:
         sent = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "sent")) or 0)
         ready = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "ready")) or 0)
+        delivered = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.status == "sent")) or 0)
+        failed = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.status == "failed")) or 0)
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"📤 Отправленные ({sent})", callback_data="sig:list:sent:0")],
         [InlineKeyboardButton(text=f"🟡 Готовые ({ready})", callback_data="sig:list:ready:0")],
     ])
-    await message.answer("📤 История выдачи сигналов", reply_markup=markup)
-
+    await message.answer(
+        "📤 История выдачи сигналов\n\n"
+        f"Успешных доставок пользователям: {delivered}\n"
+        f"Ошибок доставки: {failed}",
+        reply_markup=markup,
+    )
 
 @router.message(F.text == "📈 Статистика")
 async def admin_statistics(message: Message) -> None:
@@ -364,6 +562,7 @@ async def admin_statistics(message: Message) -> None:
         imports = int(await session.scalar(select(func.count(ImportBatch.id)).where(ImportBatch.created_at >= start, ImportBatch.created_at < end)) or 0)
         users = int(await session.scalar(select(func.count(User.id)).where(User.is_active.is_(True))) or 0)
         counts = dict((await session.execute(select(ScheduledSignal.status, func.count(ScheduledSignal.id)).group_by(ScheduledSignal.status))).all())
+        delivery_counts = dict((await session.execute(select(SignalDelivery.status, func.count(SignalDelivery.id)).group_by(SignalDelivery.status))).all())
         next_signal = (await session.execute(
             select(ScheduledSignal, Match).join(Match, Match.id == ScheduledSignal.match_id)
             .where(ScheduledSignal.status == "scheduled")
@@ -372,25 +571,209 @@ async def admin_statistics(message: Message) -> None:
     next_text = "нет"
     if next_signal:
         signal, match = next_signal
-        next_text = f"{signal.send_at:%d.%m %H:%M} · {match.player_1} — {match.player_2}"
+        next_text = f"{_fmt_dt(signal.send_at, '%d.%m %H:%M')} · {match.player_1} — {match.player_2}"
     await message.answer(
         "📈 Статистика\n\n"
         f"Сегодня импортов: {imports}\nАктивных пользователей: {users}\n"
         f"Запланировано: {counts.get('scheduled', 0)}\nГотово: {counts.get('ready', 0)}\n"
-        f"Отправлено: {counts.get('sent', 0)}\nОтменено: {counts.get('cancelled', 0)}\n\n"
+        f"Отправлено: {counts.get('sent', 0)}\nОтменено: {counts.get('cancelled', 0)}\n"
+        f"Доставлено пользователям: {delivery_counts.get('sent', 0)}\nОшибок доставки: {delivery_counts.get('failed', 0)}\n\n"
         f"Следующий сигнал: {next_text}"
     )
 
 
+
+def _user_name(user: User) -> str:
+    parts = [item for item in [user.first_name, user.last_name] if item]
+    if parts:
+        return " ".join(parts)
+    if user.username:
+        return f"@{user.username}"
+    return str(user.telegram_id)
+
+
+def _access_label(access: UserAccess | None) -> str:
+    if access is None:
+        return "нет доступа"
+    if access.status != "active":
+        return "отключён"
+    if access.access_type == "trial":
+        return f"trial · осталось {access.free_signals_remaining}"
+    if access.access_type == "paid":
+        until = f" до {access.active_until:%d.%m.%Y}" if access.active_until else ""
+        return f"paid{until}"
+    return access.access_type
+
+
+def users_list_keyboard(items: list[tuple[User, UserAccess | None]], page: int, total: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for user, access in items:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{_user_name(user)} · {_access_label(access)}",
+                callback_data=f"usr:view:{user.id}:{page}",
+            )
+        ])
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"usr:list:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"usr:list:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=f"usr:list:{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_detail_keyboard(user_id: int, page: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Выдать trial 3", callback_data=f"usr:trial:{user_id}:{page}")],
+        [InlineKeyboardButton(text="💳 Выдать paid", callback_data=f"usr:paid:{user_id}:{page}")],
+        [InlineKeyboardButton(text="⛔ Отключить доступ", callback_data=f"usr:disable:{user_id}:{page}")],
+        [InlineKeyboardButton(text="⬅️ К пользователям", callback_data=f"usr:list:{page}")],
+    ])
+
+
+def format_user_detail(user: User, access: UserAccess | None, delivered: int, failed: int) -> str:
+    username = f"@{user.username}" if user.username else "—"
+    created = _fmt_dt(user.created_at)
+    return (
+        "👤 Пользователь\n\n"
+        f"Имя: {_user_name(user)}\n"
+        f"Telegram ID: {user.telegram_id}\n"
+        f"Username: {username}\n"
+        f"Активен: {'да' if user.is_active else 'нет'}\n"
+        f"Создан: {created}\n\n"
+        f"Доступ: {_access_label(access)}\n"
+        f"Успешных доставок: {delivered}\n"
+        f"Ошибок доставки: {failed}"
+    )
+
+
+async def show_users_list(target: Message | CallbackQuery, page: int = 0) -> None:
+    page = max(0, page)
+    async with SessionFactory() as session:
+        total = int(await session.scalar(select(func.count(User.id))) or 0)
+        rows = list((await session.execute(
+            select(User, UserAccess)
+            .outerjoin(UserAccess, UserAccess.user_id == User.id)
+            .order_by(desc(User.id))
+            .offset(page * PAGE_SIZE)
+            .limit(PAGE_SIZE)
+        )).all())
+        active = int(await session.scalar(select(func.count(User.id)).where(User.is_active.is_(True))) or 0)
+        trial = int(await session.scalar(select(func.count(UserAccess.id)).where(UserAccess.status == "active", UserAccess.access_type == "trial")) or 0)
+        paid = int(await session.scalar(select(func.count(UserAccess.id)).where(UserAccess.status == "active", UserAccess.access_type == "paid")) or 0)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    text = (
+        "👥 Пользователи\n\n"
+        f"Всего: {total}\n"
+        f"Активных: {active}\n"
+        f"Пробный доступ: {trial}\n"
+        f"Платный доступ: {paid}\n\n"
+        f"Страница {page + 1} из {pages}."
+    )
+    markup = users_list_keyboard(rows, page, total)
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+async def show_user_detail(callback: CallbackQuery, user_id: int, page: int) -> None:
+    if not callback.message:
+        return
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            select(User, UserAccess)
+            .outerjoin(UserAccess, UserAccess.user_id == User.id)
+            .where(User.id == user_id)
+        )).first()
+        if row is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        user, access = row
+        delivered = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.user_id == user.id, SignalDelivery.status == "sent")) or 0)
+        failed = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.user_id == user.id, SignalDelivery.status == "failed")) or 0)
+    await callback.message.edit_text(
+        format_user_detail(user, access, delivered, failed),
+        reply_markup=user_detail_keyboard(user_id, page),
+    )
+    await callback.answer()
 @router.message(F.text == "👥 Пользователи")
 async def users_info(message: Message) -> None:
     if not is_admin(message):
         return
-    async with SessionFactory() as session:
-        total = int(await session.scalar(select(func.count(User.id))) or 0)
-        active = int(await session.scalar(select(func.count(User.id)).where(User.is_active.is_(True))) or 0)
-    await message.answer(f"👥 Пользователи\n\nВсего: {total}\nАктивных: {active}\n\nУправление подписками добавим на следующем этапе.")
+    await show_users_list(message)
 
+
+@router.callback_query(F.data.startswith("usr:list:"))
+async def users_list_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, page_raw = callback.data.split(":")
+    await show_users_list(callback, int(page_raw))
+
+
+@router.callback_query(F.data.startswith("usr:view:"))
+async def user_view_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, user_id_raw, page_raw = callback.data.split(":")
+    await show_user_detail(callback, int(user_id_raw), int(page_raw))
+
+
+@router.callback_query(F.data.startswith("usr:trial:"))
+async def user_grant_trial_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, user_id_raw, page_raw = callback.data.split(":")
+    user_id, page = int(user_id_raw), int(page_raw)
+    async with SessionFactory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        await grant_trial_access(session, user)
+        await session.commit()
+    await callback.answer("Trial-доступ выдан", show_alert=True)
+    await show_user_detail(callback, user_id, page)
+
+
+@router.callback_query(F.data.startswith("usr:paid:"))
+async def user_grant_paid_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, user_id_raw, page_raw = callback.data.split(":")
+    user_id, page = int(user_id_raw), int(page_raw)
+    async with SessionFactory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        await grant_paid_access(session, user)
+        await session.commit()
+    await callback.answer("Paid-доступ выдан", show_alert=True)
+    await show_user_detail(callback, user_id, page)
+
+
+@router.callback_query(F.data.startswith("usr:disable:"))
+async def user_disable_access_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, user_id_raw, page_raw = callback.data.split(":")
+    user_id, page = int(user_id_raw), int(page_raw)
+    async with SessionFactory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        await disable_access(session, user)
+        await session.commit()
+    await callback.answer("Доступ отключён", show_alert=True)
+    await show_user_detail(callback, user_id, page)
 
 @router.message(F.text == "⚙️ Настройки")
 async def settings_info(message: Message) -> None:

@@ -23,6 +23,24 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    access: Mapped["UserAccess | None"] = relationship(back_populates="user", uselist=False)
+    deliveries: Mapped[list["SignalDelivery"]] = relationship(back_populates="user")
+
+
+class UserAccess(Base):
+    __tablename__ = "user_accesses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    access_type: Mapped[str] = mapped_column(String(30), default="trial", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    free_signals_remaining: Mapped[int] = mapped_column(Integer, default=3)
+    active_until: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user: Mapped[User] = relationship(back_populates="access")
+
 
 class ImportBatch(Base):
     __tablename__ = "import_batches"
@@ -68,6 +86,7 @@ class Match(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     signal: Mapped["ScheduledSignal | None"] = relationship(back_populates="match", uselist=False)
+    decision_logs: Mapped[list["SignalDecisionLog"]] = relationship(back_populates="match")
 
 
 class MatchSnapshot(Base):
@@ -100,3 +119,43 @@ class ScheduledSignal(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     match: Mapped[Match] = relationship(back_populates="signal")
+    deliveries: Mapped[list["SignalDelivery"]] = relationship(back_populates="signal")
+
+
+class SignalDelivery(Base):
+    __tablename__ = "signal_deliveries"
+    __table_args__ = (UniqueConstraint("signal_id", "user_id", name="uq_delivery_signal_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("scheduled_signals.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    error_text: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    signal: Mapped[ScheduledSignal] = relationship(back_populates="deliveries")
+    user: Mapped[User] = relationship(back_populates="deliveries")
+
+
+class SignalDecisionLog(Base):
+    __tablename__ = "signal_decision_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"), index=True)
+    import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), index=True)
+    algorithm_version: Mapped[str] = mapped_column(String(50), index=True)
+    source: Mapped[str] = mapped_column(String(50), default="import", index=True)
+    suitable: Mapped[bool] = mapped_column(Boolean, index=True)
+    side: Mapped[int | None] = mapped_column(Integer)
+    selected_player: Mapped[str | None] = mapped_column(String(255))
+    probability: Mapped[float | None] = mapped_column()
+    level: Mapped[str | None] = mapped_column(String(30), index=True)
+    signal_type: Mapped[str | None] = mapped_column(String(100))
+    reason: Mapped[str | None] = mapped_column(Text)
+    decision_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    decision_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    match: Mapped[Match] = relationship(back_populates="decision_logs")

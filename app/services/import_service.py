@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings import get_settings
 from app.database.models import ImportBatch, Match, MatchSnapshot, ScheduledSignal
+from app.services.decision_log import record_decision_log
 from app.services.excel_parser import ParsedMatch, parse_tournaments_file
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.match_normalizer import normalize_match
@@ -140,6 +141,13 @@ async def import_tournaments(
         )
 
         decision = analyze_match(parsed)
+        await record_decision_log(
+            session,
+            match_id=existing.id,
+            decision=decision,
+            import_batch_id=batch.id,
+            source="import",
+        )
         signal = await session.scalar(
             select(ScheduledSignal).where(ScheduledSignal.match_id == existing.id)
         )
