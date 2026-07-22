@@ -120,6 +120,7 @@ class ScheduledSignal(Base):
 
     match: Mapped[Match] = relationship(back_populates="signal")
     deliveries: Mapped[list["SignalDelivery"]] = relationship(back_populates="signal")
+    result: Mapped["SignalResult | None"] = relationship(back_populates="signal", uselist=False)
 
 
 class SignalDelivery(Base):
@@ -137,6 +138,22 @@ class SignalDelivery(Base):
 
     signal: Mapped[ScheduledSignal] = relationship(back_populates="deliveries")
     user: Mapped[User] = relationship(back_populates="deliveries")
+
+
+class SignalResult(Base):
+    __tablename__ = "signal_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("scheduled_signals.id"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
+    source: Mapped[str] = mapped_column(String(30), default="manual", index=True)
+    comment: Mapped[str | None] = mapped_column(Text)
+    fixed_by_telegram_id: Mapped[int | None] = mapped_column(BigInteger)
+    fixed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    signal: Mapped[ScheduledSignal] = relationship(back_populates="result")
 
 
 class SignalDecisionLog(Base):

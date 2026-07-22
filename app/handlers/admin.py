@@ -9,10 +9,10 @@ from aiogram.enums import ContentType
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 
 from app.settings import get_settings
-from app.database.models import ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, User, UserAccess
+from app.database.models import ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, SignalResult, User, UserAccess
 from app.database.session import SessionFactory
 from app.keyboards.common import admin_menu
 from app.services.access import disable_access, grant_paid_access, grant_trial_access
@@ -22,6 +22,7 @@ from app.services.import_service import import_tournaments
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
+from app.services.signal_results import LEVEL_ORDER, auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, summarize_results
 
 router = Router(name="admin")
 PAGE_SIZE = 8
@@ -59,6 +60,14 @@ def _local_dt(value: datetime | None) -> datetime | None:
 def _fmt_dt(value: datetime | None, fmt: str = "%d.%m.%Y %H:%M") -> str:
     local = _local_dt(value)
     return local.strftime(fmt) if local else "—"
+
+def _format_level_result_line(level: str, counter) -> str:
+    return (
+        f"{level}: ✅ {counter.won} / ❌ {counter.lost} / "
+        f"↩️ {counter.void} / ❔ {counter.unknown} · WR {format_winrate(counter.winrate)}"
+    )
+
+
 def signals_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=f"🟢 Запланированные ({counts.get('scheduled', 0)})", callback_data="sig:list:scheduled:0")],
@@ -70,14 +79,20 @@ def signals_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def signal_list_keyboard(items: list[tuple[ScheduledSignal, Match]], status: str, page: int, total: int) -> InlineKeyboardMarkup:
+def signal_list_keyboard(
+    items: list[tuple[ScheduledSignal, Match, SignalResult | None]],
+    status: str,
+    page: int,
+    total: int,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for signal, match in items:
+    for signal, match, result in items:
         side = signal.signal_payload.get("side") if signal.signal_payload else None
         side_text = f"П{side}" if side in (1, 2) else "—"
+        result_text = result_short_label(result.status if result else None)
         rows.append([
             InlineKeyboardButton(
-                text=f"{match.match_time} · {match.player_1} — {match.player_2} · {side_text}",
+                text=f"{match.match_time} · {match.player_1} — {match.player_2} · {side_text} · {result_text}",
                 callback_data=f"sig:view:{signal.id}:{status}:{page}",
             )
         ])
@@ -91,11 +106,53 @@ def signal_list_keyboard(items: list[tuple[ScheduledSignal, Match]], status: str
     rows.append([InlineKeyboardButton(text="⬅️ К разделу сигналов", callback_data="sig:dashboard")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+RESULT_FILTER_LABELS = {
+    "unrated": "❔ Без результата",
+    "won": "✅ Зашли",
+    "lost": "❌ Не зашли",
+    "void": "↩️ Возврат",
+}
+
+
+def result_filter_keyboard(
+    items: list[tuple[ScheduledSignal, Match, SignalResult | None]],
+    result_filter: str,
+    page: int,
+    total: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for signal, match, result in items:
+        side = signal.signal_payload.get("side") if signal.signal_payload else None
+        side_text = f"П{side}" if side in (1, 2) else "—"
+        result_text = result_short_label(result.status if result else None)
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{match.match_time} · {match.player_1} — {match.player_2} · {side_text} · {result_text}",
+                callback_data=f"sig:view:{signal.id}:sent:0",
+            )
+        ])
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"sig:rlist:{result_filter}:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"sig:rlist:{result_filter}:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ К истории", callback_data="sig:history")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def signal_detail_keyboard(signal_id: int, status: str, page: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     rows.append([InlineKeyboardButton(text="🧾 Трассировка решения", callback_data=f"sig:trace:{signal_id}:{status}:{page}")])
     rows.append([InlineKeyboardButton(text="📬 Доставки", callback_data=f"sig:deliveries:{signal_id}:{status}:{page}")])
+    rows.append([
+        InlineKeyboardButton(text="✅ Зашёл", callback_data=f"sig:result:{signal_id}:won:{status}:{page}"),
+        InlineKeyboardButton(text="❌ Не зашёл", callback_data=f"sig:result:{signal_id}:lost:{status}:{page}"),
+    ])
+    rows.append([
+        InlineKeyboardButton(text="↩️ Возврат", callback_data=f"sig:result:{signal_id}:void:{status}:{page}"),
+        InlineKeyboardButton(text="❔ Неизвестно", callback_data=f"sig:result:{signal_id}:unknown:{status}:{page}"),
+    ])
     if status in {"scheduled", "ready"}:
         rows.append([InlineKeyboardButton(text="📨 Отправить себе сейчас", callback_data=f"sig:preview:{signal_id}:{status}:{page}")])
         rows.append([InlineKeyboardButton(text="🚀 Отправить пользователям сейчас", callback_data=f"sig:sendnow:{signal_id}:{status}:{page}")])
@@ -184,6 +241,43 @@ def format_signal_deliveries(
             error = delivery.error_text.replace("\n", " ")[:240]
             lines.append(f"  Ошибка: {error}")
     return "\n".join(lines)[:3900]
+def format_sent_history_summary(
+    *,
+    sent: int,
+    ready: int,
+    delivered: int,
+    failed: int,
+    recent_rows: list[tuple[ScheduledSignal, Match, SignalResult | None]],
+    delivery_counts: dict[int, dict[str, int]],
+) -> str:
+    lines = [
+        "📤 История выдачи сигналов",
+        "",
+        f"Отправленных сигналов: {sent}",
+        f"Готовых к отправке: {ready}",
+        f"Успешных доставок пользователям: {delivered}",
+        f"Ошибок доставки: {failed}",
+        "",
+        "Последние отправленные:",
+    ]
+    if not recent_rows:
+        lines.append("пока нет отправленных сигналов")
+        return "\n".join(lines)
+
+    for signal, match, result in recent_rows[:10]:
+        payload = signal.signal_payload or {}
+        side = payload.get("side")
+        side_text = f"П{side}" if side in (1, 2) else "—"
+        level = payload.get("level") or "—"
+        sent_at = _fmt_dt(signal.sent_at or signal.send_at, "%d.%m %H:%M")
+        counts = delivery_counts.get(signal.id, {})
+        lines.extend([
+            f"• {sent_at} · {result_short_label(result.status if result else None)} {result_source_label(result.source if result else None)} · {level} · {side_text}",
+            f"  {match.player_1} — {match.player_2}",
+            f"  доставки: ✅ {counts.get('sent', 0)} / ❌ {counts.get('failed', 0)} / ⏳ {counts.get('pending', 0)}",
+        ])
+    return "\n".join(lines)[:3900]
+
 async def get_signal_counts() -> dict[str, int]:
     async with SessionFactory() as session:
         rows = (await session.execute(
@@ -295,8 +389,9 @@ async def signals_list_callback(callback: CallbackQuery) -> None:
     async with SessionFactory() as session:
         total = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == status)) or 0)
         rows = (await session.execute(
-            select(ScheduledSignal, Match)
+            select(ScheduledSignal, Match, SignalResult)
             .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
             .where(ScheduledSignal.status == status)
             .order_by(ScheduledSignal.send_at.asc())
             .offset(page * PAGE_SIZE)
@@ -311,6 +406,47 @@ async def signals_list_callback(callback: CallbackQuery) -> None:
     await callback.message.edit_text(text, reply_markup=signal_list_keyboard(rows, status, page, total))
     await callback.answer()
 
+@router.callback_query(F.data.startswith("sig:rlist:"))
+async def signal_result_list_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
+        return
+    _, _, result_filter, page_raw = callback.data.split(":")
+    page = max(0, int(page_raw))
+    if result_filter not in RESULT_FILTER_LABELS:
+        await callback.answer("Неизвестный фильтр", show_alert=True)
+        return
+
+    if result_filter == "unrated":
+        condition = or_(SignalResult.id.is_(None), SignalResult.status == "unknown")
+    else:
+        condition = SignalResult.status == result_filter
+
+    async with SessionFactory() as session:
+        total = int(await session.scalar(
+            select(func.count(ScheduledSignal.id))
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.status == "sent")
+            .where(condition)
+        ) or 0)
+        rows = list((await session.execute(
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.status == "sent")
+            .where(condition)
+            .order_by(desc(ScheduledSignal.sent_at), desc(ScheduledSignal.id))
+            .offset(page * PAGE_SIZE)
+            .limit(PAGE_SIZE)
+        )).all())
+
+    label = RESULT_FILTER_LABELS[result_filter]
+    if rows:
+        pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        text = f"{label}\n\nСтраница {page + 1} из {pages}. Выберите сигнал:"
+    else:
+        text = f"{label}\n\nСписок пуст."
+    await callback.message.edit_text(text, reply_markup=result_filter_keyboard(rows, result_filter, page, total))
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("sig:view:"))
 async def signal_view_callback(callback: CallbackQuery) -> None:
@@ -320,22 +456,38 @@ async def signal_view_callback(callback: CallbackQuery) -> None:
     signal_id, page = int(signal_id_raw), int(page_raw)
     async with SessionFactory() as session:
         row = (await session.execute(
-            select(ScheduledSignal, Match).join(Match, Match.id == ScheduledSignal.match_id)
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
             .where(ScheduledSignal.id == signal_id)
         )).first()
     if row is None:
         await callback.answer("Сигнал не найден", show_alert=True)
         return
-    signal, match = row
-    # Администратор видит ровно тот же текст, который получит пользователь.
+    signal, match, result = row
+    text = f"Результат: {result_full_label(result)}\n\n" + (signal.message_text or "Текст сигнала отсутствует")
     await callback.message.edit_text(
-        signal.message_text or "Текст сигнала отсутствует",
+        text,
         reply_markup=signal_detail_keyboard(signal.id, status, page),
         disable_web_page_preview=True,
     )
     await callback.answer()
 
-
+@router.callback_query(F.data.startswith("sig:result:"))
+async def signal_result_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
+        return
+    _, _, signal_id_raw, result_status, status, page_raw = callback.data.split(":")
+    signal_id, page = int(signal_id_raw), int(page_raw)
+    async with SessionFactory() as session:
+        signal = await session.get(ScheduledSignal, signal_id)
+        if signal is None:
+            await callback.answer("Сигнал не найден", show_alert=True)
+            return
+        result = await set_signal_result(session, signal, result_status, callback.from_user.id)
+    await callback.answer(f"Результат: {result_label(result.status)}")
+    callback.data = f"sig:view:{signal_id}:{status}:{page}"
+    await signal_view_callback(callback)
 
 @router.callback_query(F.data.startswith("sig:trace:"))
 async def signal_trace_callback(callback: CallbackQuery) -> None:
@@ -531,25 +683,91 @@ async def latest_import(message: Message) -> None:
     )
 
 
-@router.message(F.text == "📤 История отправок")
-async def sent_history(message: Message) -> None:
-    if not is_admin(message):
-        return
+async def show_sent_history(target: Message | CallbackQuery) -> None:
     async with SessionFactory() as session:
         sent = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "sent")) or 0)
         ready = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "ready")) or 0)
         delivered = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.status == "sent")) or 0)
         failed = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.status == "failed")) or 0)
+        recent_rows = list((await session.execute(
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.status == "sent")
+            .order_by(desc(ScheduledSignal.sent_at), desc(ScheduledSignal.id))
+            .limit(10)
+        )).all())
+        signal_ids = [signal.id for signal, _, _ in recent_rows]
+        delivery_counts: dict[int, dict[str, int]] = {}
+        if signal_ids:
+            delivery_rows = (await session.execute(
+                select(SignalDelivery.signal_id, SignalDelivery.status, func.count(SignalDelivery.id))
+                .where(SignalDelivery.signal_id.in_(signal_ids))
+                .group_by(SignalDelivery.signal_id, SignalDelivery.status)
+            )).all()
+            for signal_id, delivery_status, count in delivery_rows:
+                delivery_counts.setdefault(signal_id, {})[delivery_status] = int(count)
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"📤 Отправленные ({sent})", callback_data="sig:list:sent:0")],
+        [InlineKeyboardButton(text="🔄 Автооценить по счету", callback_data="sig:autoresults")],
+        [
+            InlineKeyboardButton(text="❔ Без результата", callback_data="sig:rlist:unrated:0"),
+            InlineKeyboardButton(text="✅ Зашли", callback_data="sig:rlist:won:0"),
+        ],
+        [
+            InlineKeyboardButton(text="❌ Не зашли", callback_data="sig:rlist:lost:0"),
+            InlineKeyboardButton(text="↩️ Возврат", callback_data="sig:rlist:void:0"),
+        ],
         [InlineKeyboardButton(text=f"🟡 Готовые ({ready})", callback_data="sig:list:ready:0")],
     ])
-    await message.answer(
-        "📤 История выдачи сигналов\n\n"
-        f"Успешных доставок пользователям: {delivered}\n"
-        f"Ошибок доставки: {failed}",
-        reply_markup=markup,
+    text = format_sent_history_summary(
+        sent=sent,
+        ready=ready,
+        delivered=delivered,
+        failed=failed,
+        recent_rows=recent_rows,
+        delivery_counts=delivery_counts,
     )
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == "📤 История отправок")
+async def sent_history(message: Message) -> None:
+    if not is_admin(message):
+        return
+    await show_sent_history(message)
+
+
+@router.callback_query(F.data == "sig:autoresults")
+async def signal_auto_results_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        details = ""
+    if summary.updated_items:
+        preview = "\n".join(summary.updated_items[:5])
+        more = f"\n… ещё {len(summary.updated_items) - 5}" if len(summary.updated_items) > 5 else ""
+        details = f"\n\nОбновлено:\n{preview}{more}"
+    await callback.answer(
+        "Автооценка завершена: "
+        f"обновлено {summary.updated}, "
+        f"без изменений {summary.unchanged}, "
+        f"ручных пропущено {summary.skipped_manual}, "
+        f"без счета {summary.no_score}"
+        f"{details}",
+        show_alert=True,
+    )
+    await show_sent_history(callback)
+
+@router.callback_query(F.data == "sig:history")
+async def sent_history_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+    await show_sent_history(callback)
 
 @router.message(F.text == "📈 Статистика")
 async def admin_statistics(message: Message) -> None:
@@ -563,6 +781,10 @@ async def admin_statistics(message: Message) -> None:
         users = int(await session.scalar(select(func.count(User.id)).where(User.is_active.is_(True))) or 0)
         counts = dict((await session.execute(select(ScheduledSignal.status, func.count(ScheduledSignal.id)).group_by(ScheduledSignal.status))).all())
         delivery_counts = dict((await session.execute(select(SignalDelivery.status, func.count(SignalDelivery.id)).group_by(SignalDelivery.status))).all())
+        result_rows = list((await session.execute(
+            select(ScheduledSignal.signal_payload, SignalResult.status)
+            .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+        )).all())
         next_signal = (await session.execute(
             select(ScheduledSignal, Match).join(Match, Match.id == ScheduledSignal.match_id)
             .where(ScheduledSignal.status == "scheduled")
@@ -572,16 +794,34 @@ async def admin_statistics(message: Message) -> None:
     if next_signal:
         signal, match = next_signal
         next_text = f"{_fmt_dt(signal.send_at, '%d.%m %H:%M')} · {match.player_1} — {match.player_2}"
+
+    sent_total = counts.get("sent", 0)
+    result_summary = summarize_results(result_rows, total_sent=sent_total)
+    level_lines = []
+    for level in LEVEL_ORDER:
+        if level in result_summary.by_level:
+            level_lines.append(_format_level_result_line(level, result_summary.by_level[level]))
+    for level in sorted(set(result_summary.by_level) - set(LEVEL_ORDER)):
+        level_lines.append(_format_level_result_line(level, result_summary.by_level[level]))
+    level_text = "\n".join(level_lines) if level_lines else "пока нет зафиксированных результатов"
+
     await message.answer(
         "📈 Статистика\n\n"
         f"Сегодня импортов: {imports}\nАктивных пользователей: {users}\n"
         f"Запланировано: {counts.get('scheduled', 0)}\nГотово: {counts.get('ready', 0)}\n"
-        f"Отправлено: {counts.get('sent', 0)}\nОтменено: {counts.get('cancelled', 0)}\n"
+        f"Отправлено: {sent_total}\nОтменено: {counts.get('cancelled', 0)}\n"
         f"Доставлено пользователям: {delivery_counts.get('sent', 0)}\nОшибок доставки: {delivery_counts.get('failed', 0)}\n\n"
+        "Результаты сигналов:\n"
+        f"✅ Зашло: {result_summary.overall.won}\n"
+        f"❌ Не зашло: {result_summary.overall.lost}\n"
+        f"↩️ Возврат: {result_summary.overall.void}\n"
+        f"❔ Неизвестно: {result_summary.overall.unknown}\n"
+        f"Оценено: {result_summary.evaluated} из {result_summary.total_sent}\n"
+        f"Без результата: {result_summary.unrated_sent}\n"
+        f"Winrate: {format_winrate(result_summary.overall.winrate)}\n\n"
+        f"По уровням:\n{level_text}\n\n"
         f"Следующий сигнал: {next_text}"
     )
-
-
 
 def _user_name(user: User) -> str:
     parts = [item for item in [user.first_name, user.last_name] if item]

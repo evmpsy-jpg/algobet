@@ -15,6 +15,7 @@ from app.services.excel_parser import ParsedMatch, parse_tournaments_file
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.match_normalizer import normalize_match
 from app.services.rules_config import get_signal_rules
+from app.services.signal_results import auto_set_signal_result
 
 
 @dataclass(slots=True)
@@ -151,6 +152,9 @@ async def import_tournaments(
         signal = await session.scalar(
             select(ScheduledSignal).where(ScheduledSignal.match_id == existing.id)
         )
+
+        if signal is not None and signal.status == "sent":
+            await auto_set_signal_result(session, signal, existing)
 
         if decision.suitable:
             lead_minutes = int(get_signal_rules()["signal"].get("lead_minutes", settings.signal_lead_minutes))
