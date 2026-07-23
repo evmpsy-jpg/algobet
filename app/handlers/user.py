@@ -154,6 +154,7 @@ def subscription_plans_keyboard() -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for group, label in PLAN_GROUP_LABELS.items():
         rows.append([InlineKeyboardButton(text=label, callback_data=f"sub:group:{group}")])
+    rows.append([InlineKeyboardButton(text="?? ??????? ????", callback_data="sub:main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -343,6 +344,14 @@ async def subscription_handler(message: Message) -> None:
 async def subscription_plans_callback(callback: CallbackQuery) -> None:
     if callback.message:
         await callback.message.edit_text(format_subscription_plans_text(), reply_markup=subscription_plans_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sub:main_menu")
+async def subscription_main_menu_callback(callback: CallbackQuery) -> None:
+    is_admin = bool(callback.from_user and callback.from_user.id in get_settings().admin_ids)
+    if callback.message:
+        await callback.message.answer("??????? ????", reply_markup=main_menu(is_admin=is_admin))
     await callback.answer()
 
 

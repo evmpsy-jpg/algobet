@@ -1,4 +1,6 @@
 import pytest
+
+from app.handlers.user import subscription_plans_keyboard
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -134,3 +136,12 @@ def test_format_subscription_activation_user_text_contains_access_terms() -> Non
     assert "#6" in text
     assert "Всё включено" in text
     assert "48 часов" in text
+
+
+def test_subscription_plans_keyboard_has_main_menu_button() -> None:
+    markup = subscription_plans_keyboard()
+
+    button = markup.inline_keyboard[-1][0]
+
+    assert button.callback_data == "sub:main_menu"
+    assert "??????? ????" in button.text
