@@ -78,6 +78,16 @@ def is_admin(message: Message) -> bool:
     return is_admin_user(message.from_user.id if message.from_user else None)
 
 
+def remove_uploaded_file(path: Path) -> bool:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
 
 
 def _local_dt(value: datetime | None) -> datetime | None:
@@ -465,6 +475,7 @@ async def receive_upload(message: Message, state: FSMContext) -> None:
         return
     finally:
         await state.clear()
+        remove_uploaded_file(destination)
     warning_text = ""
     if summary.warnings:
         preview = "\n".join(f"• {item}" for item in summary.warnings[:5])

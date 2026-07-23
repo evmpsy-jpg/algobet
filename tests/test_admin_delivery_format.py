@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, Match, ScheduledSignal, SignalDelivery, SignalResult, User
-from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, result_filter_keyboard, signal_list_keyboard
+from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard
 
 
 def make_match() -> Match:
@@ -184,3 +184,12 @@ async def test_get_signal_group_counts_summarizes_payload_groups(monkeypatch) ->
 
     assert counts == {"vip": 1, "all": 1, "unknown": 1}
     await engine.dispose()
+
+
+def test_remove_uploaded_file_deletes_file_and_ignores_missing(tmp_path) -> None:
+    path = tmp_path / "upload.xlsx"
+    path.write_bytes(b"excel")
+
+    assert remove_uploaded_file(path) is True
+    assert path.exists() is False
+    assert remove_uploaded_file(path) is False
