@@ -88,6 +88,52 @@ def remove_uploaded_file(path: Path) -> bool:
     return True
 
 
+def directory_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            try:
+                total += item.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def format_bytes(value: int) -> str:
+    units = ["B", "KB", "MB", "GB"]
+    amount = float(max(value, 0))
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(amount)} {unit}"
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+
+
+def sqlite_database_path(database_url: str) -> Path | None:
+    prefix = "sqlite+aiosqlite:///"
+    if not database_url.startswith(prefix):
+        return None
+    raw_path = database_url[len(prefix):]
+    return Path(raw_path)
+
+
+def storage_usage_lines(settings) -> list[str]:
+    db_path = sqlite_database_path(settings.database_url)
+    db_size = directory_size_bytes(db_path) if db_path is not None else 0
+    db_text = format_bytes(db_size) if db_path is not None else "\u0432\u043d\u0435\u0448\u043d\u044f\u044f \u0411\u0414"
+    return [
+        "\u0414\u0438\u0441\u043a:",
+        f"data: {format_bytes(directory_size_bytes(settings.data_dir))}",
+        f"uploads: {format_bytes(directory_size_bytes(settings.uploads_dir))}",
+        f"SQLite: {db_text}",
+    ]
+
+
 
 
 def _local_dt(value: datetime | None) -> datetime | None:
@@ -918,6 +964,8 @@ async def sent_history_callback(callback: CallbackQuery) -> None:
 async def admin_statistics(message: Message) -> None:
     if not is_admin(message):
         return
+    settings = get_settings()
+    storage_text = "\n".join(storage_usage_lines(settings))
     today = datetime.now().date()
     start = datetime.combine(today, datetime.min.time())
     end = start + timedelta(days=1)

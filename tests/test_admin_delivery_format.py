@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, Match, ScheduledSignal, SignalDelivery, SignalResult, User
-from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard
+from app.handlers.admin import directory_size_bytes, format_bytes, format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines
 
 
 def make_match() -> Match:
@@ -203,3 +204,42 @@ def test_signals_dashboard_keyboard_has_cancelled_button() -> None:
 
     assert "sig:list:cancelled:0" in callbacks
     assert any("4" in text for text in texts if text)
+
+
+def test_storage_usage_helpers_format_sizes_and_sqlite_path(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    uploads_dir = tmp_path / "uploads"
+    data_dir.mkdir()
+    uploads_dir.mkdir()
+    (data_dir / "algobet.db").write_bytes(b"a" * 2048)
+    (uploads_dir / "old.xlsx").write_bytes(b"b" * 1024)
+
+    settings = SimpleNamespace(
+        database_url=f"sqlite+aiosqlite:///{data_dir / 'algobet.db'}",
+        data_dir=data_dir,
+        uploads_dir=uploads_dir,
+    )
+
+    assert format_bytes(0) == "0 B"
+    assert format_bytes(1536) == "1.5 KB"
+    assert sqlite_database_path(settings.database_url) == data_dir / "algobet.db"
+    assert directory_size_bytes(uploads_dir) == 1024
+
+    lines = storage_usage_lines(settings)
+
+    assert lines[0] == "\u0414\u0438\u0441\u043a:"
+    assert "data: 2.0 KB" in lines
+    assert "uploads: 1.0 KB" in lines
+    assert "SQLite: 2.0 KB" in lines
+
+
+def test_storage_usage_reports_external_database(tmp_path) -> None:
+    settings = SimpleNamespace(
+        database_url="postgresql+asyncpg://user:pass@db/algobet",
+        data_dir=tmp_path / "data",
+        uploads_dir=tmp_path / "uploads",
+    )
+
+    lines = storage_usage_lines(settings)
+
+    assert "SQLite: \u0432\u043d\u0435\u0448\u043d\u044f\u044f \u0411\u0414" in lines
