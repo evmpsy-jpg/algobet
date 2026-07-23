@@ -146,7 +146,7 @@ def signals_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"🟢 Запланированные ({counts.get('scheduled', 0)})", callback_data="sig:list:scheduled:0")],
         [InlineKeyboardButton(text=f"🟡 Готовые ({counts.get('ready', 0)})", callback_data="sig:list:ready:0")],
         [InlineKeyboardButton(text=f"📤 Отправленные ({counts.get('sent', 0)})", callback_data="sig:list:sent:0")],
-        f"\u274c \u041e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: {counts.get('cancelled', 0)}\\n\\n"
+        [InlineKeyboardButton(text=f"❌ Отменённые ({counts.get('cancelled', 0)})", callback_data="sig:list:cancelled:0")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="sig:dashboard")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)

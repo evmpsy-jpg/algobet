@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, Match, ScheduledSignal, SignalDelivery, SignalResult, User
-from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard
+from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard
 
 
 def make_match() -> Match:
@@ -193,3 +193,13 @@ def test_remove_uploaded_file_deletes_file_and_ignores_missing(tmp_path) -> None
     assert remove_uploaded_file(path) is True
     assert path.exists() is False
     assert remove_uploaded_file(path) is False
+
+
+def test_signals_dashboard_keyboard_has_cancelled_button() -> None:
+    markup = signals_dashboard_keyboard({"scheduled": 1, "ready": 2, "sent": 3, "cancelled": 4})
+
+    callbacks = [row[0].callback_data for row in markup.inline_keyboard]
+    texts = [row[0].text for row in markup.inline_keyboard]
+
+    assert "sig:list:cancelled:0" in callbacks
+    assert any("4" in text for text in texts if text)
