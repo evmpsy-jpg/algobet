@@ -136,7 +136,7 @@ def signals_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"🟢 Запланированные ({counts.get('scheduled', 0)})", callback_data="sig:list:scheduled:0")],
         [InlineKeyboardButton(text=f"🟡 Готовые ({counts.get('ready', 0)})", callback_data="sig:list:ready:0")],
         [InlineKeyboardButton(text=f"📤 Отправленные ({counts.get('sent', 0)})", callback_data="sig:list:sent:0")],
-        [InlineKeyboardButton(text=f"❌ Отменённые ({counts.get('cancelled', 0)})", callback_data="sig:list:cancelled:0")],
+        f"\u274c \u041e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: {counts.get('cancelled', 0)}\\n\\n"
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="sig:dashboard")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -384,8 +384,22 @@ async def get_signal_counts() -> dict[str, int]:
     return dict(rows)
 
 
+async def get_signal_group_counts() -> dict[str, int]:
+    counts = {"vip": 0, "all": 0, "unknown": 0}
+    async with SessionFactory() as session:
+        payloads = (await session.scalars(select(ScheduledSignal.signal_payload))).all()
+    for payload in payloads:
+        group = _signal_group_value(payload if isinstance(payload, dict) else None)
+        if group in {"vip", "all"}:
+            counts[group] += 1
+        else:
+            counts["unknown"] += 1
+    return counts
+
+
 async def show_dashboard(target: Message | CallbackQuery) -> None:
     counts = await get_signal_counts()
+    group_counts = await get_signal_group_counts()
     total = sum(counts.values())
     text = (
         "📊 <b>Сигналы</b>\n\n"
@@ -393,7 +407,11 @@ async def show_dashboard(target: Message | CallbackQuery) -> None:
         f"🟢 Запланировано: {counts.get('scheduled', 0)}\n"
         f"🟡 Готово к отправке: {counts.get('ready', 0)}\n"
         f"📤 Отправлено: {counts.get('sent', 0)}\n"
-        f"❌ Отменено: {counts.get('cancelled', 0)}"
+        f"\u274c \u041e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: {counts.get('cancelled', 0)}\\n\\n"
+        "\u041f\u043e \u0442\u0438\u043f\u0430\u043c:\\n"
+        f"VIP: {group_counts.get('vip', 0)}\n"
+        f"ALL: {group_counts.get('all', 0)}\n"
+        f"\u0411\u0435\u0437 \u0442\u0438\u043f\u0430: {group_counts.get('unknown', 0)}"
     )
     markup = signals_dashboard_keyboard(counts)
     if isinstance(target, CallbackQuery):

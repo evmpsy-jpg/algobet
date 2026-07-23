@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.database.models import Match, ScheduledSignal, SignalDelivery, SignalResult, User
-from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, result_filter_keyboard, signal_list_keyboard
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.database.models import Base, Match, ScheduledSignal, SignalDelivery, SignalResult, User
+from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, result_filter_keyboard, signal_list_keyboard
 
 
 def make_match() -> Match:
@@ -153,3 +156,31 @@ def test_signal_list_keyboard_filters_by_signal_group() -> None:
     assert "VIP" in markup.inline_keyboard[1][0].text
     assert markup.inline_keyboard[2][0].callback_data == "sig:list:ready:0:vip"
     assert markup.inline_keyboard[2][1].callback_data == "sig:list:ready:2:vip"
+
+
+@pytest.mark.asyncio
+async def test_get_signal_group_counts_summarizes_payload_groups(monkeypatch) -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        matches = [make_match(), make_match(), make_match()]
+        for index, match in enumerate(matches, start=1):
+            match.external_match_id = 1000 + index
+        session.add_all(matches)
+        await session.flush()
+        session.add_all([
+            ScheduledSignal(match_id=matches[0].id, status="ready", send_at=datetime(2026, 7, 22, 7, 40), signal_payload={"signal_group": "vip"}),
+            ScheduledSignal(match_id=matches[1].id, status="ready", send_at=datetime(2026, 7, 22, 7, 41), signal_payload={"signal_group": "all"}),
+            ScheduledSignal(match_id=matches[2].id, status="ready", send_at=datetime(2026, 7, 22, 7, 42), signal_payload={}),
+        ])
+        await session.commit()
+
+    monkeypatch.setattr("app.handlers.admin.SessionFactory", factory)
+
+    counts = await get_signal_group_counts()
+
+    assert counts == {"vip": 1, "all": 1, "unknown": 1}
+    await engine.dispose()
