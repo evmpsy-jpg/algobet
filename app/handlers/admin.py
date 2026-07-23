@@ -19,17 +19,21 @@ from app.services.access import disable_access, grant_paid_access, grant_subscri
 from app.services.bot_settings import (
     ANALYSIS_PAYMENT_DETAILS_KEY,
     ANALYSIS_SPECIALIST_CONTACT_KEY,
+    SUBSCRIPTION_PAYMENT_DETAILS_KEY,
+    SUBSCRIPTION_SPECIALIST_CONTACT_KEY,
     get_analysis_payment_config,
+    get_subscription_payment_config,
     set_bot_setting,
 )
 from app.services.decision_log import record_decision_log
 from app.services.excel_parser import ParsedMatch
 from app.services.import_service import import_tournaments
+from app.services.match_analysis import format_analysis_status_user_text
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
 from app.services.signal_results import LEVEL_ORDER, auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, summarize_results
-from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price
+from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price, format_subscription_activation_user_text
 
 router = Router(name="admin")
 PAGE_SIZE = 8
@@ -58,6 +62,12 @@ class UploadStates(StatesGroup):
 class AdminSettingsStates(StatesGroup):
     waiting_for_analysis_payment_details = State()
     waiting_for_analysis_specialist_contact = State()
+    waiting_for_subscription_payment_details = State()
+    waiting_for_subscription_specialist_contact = State()
+
+
+class UserSearchStates(StatesGroup):
+    waiting_for_telegram_id = State()
 
 
 def is_admin_user(user_id: int | None) -> bool:
@@ -911,6 +921,13 @@ def subscription_requests_list_keyboard(
 
 def subscription_request_detail_keyboard(request_id: int, current_status: str, list_status: str, page: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    if current_status not in {"paid", "done"}:
+        rows.append([
+            InlineKeyboardButton(
+                text="✅ Активировать и обработать",
+                callback_data=f"subadm:activate:{request_id}:{list_status}:{page}",
+            )
+        ])
     status_buttons: list[InlineKeyboardButton] = []
     for status, label in SUBSCRIPTION_STATUS_LABELS.items():
         if status == current_status:
@@ -962,18 +979,36 @@ def format_subscription_request_detail(request: SubscriptionRequest, user: User 
     )
 
 
+def format_subscription_requests_dashboard_text(counts: dict[str, int], amounts: dict[str, int]) -> str:
+    total = sum(counts.values())
+    new_amount = amounts.get("new", 0)
+    paid_amount = amounts.get("paid", 0)
+    done_amount = amounts.get("done", 0)
+    cancelled_amount = amounts.get("cancelled", 0)
+    return (
+        "💳 Заявки на подписку\n\n"
+        f"Всего: {total}\n"
+        f"Новые: {counts.get('new', 0)} · {format_price(new_amount)}\n"
+        f"Оплаченные: {counts.get('paid', 0)} · {format_price(paid_amount)}\n"
+        f"Обработанные: {counts.get('done', 0)} · {format_price(done_amount)}\n"
+        f"Отменённые: {counts.get('cancelled', 0)} · {format_price(cancelled_amount)}\n\n"
+        f"Оплачено + обработано: {format_price(paid_amount + done_amount)}\n"
+        "Выберите статус, чтобы открыть список заявок."
+    )
+
+
 async def show_subscription_requests_dashboard(target: Message | CallbackQuery) -> None:
     async with SessionFactory() as session:
         rows = (await session.execute(
-            select(SubscriptionRequest.status, func.count(SubscriptionRequest.id)).group_by(SubscriptionRequest.status)
+            select(
+                SubscriptionRequest.status,
+                func.count(SubscriptionRequest.id),
+                func.coalesce(func.sum(SubscriptionRequest.price_rub), 0),
+            ).group_by(SubscriptionRequest.status)
         )).all()
-    counts = {status: int(count) for status, count in rows}
-    total = sum(counts.values())
-    text = (
-        "💳 Заявки на подписку\n\n"
-        f"Всего: {total}\n"
-        "Выберите статус, чтобы открыть список заявок."
-    )
+    counts = {status: int(count) for status, count, _ in rows}
+    amounts = {status: int(amount or 0) for status, _, amount in rows}
+    text = format_subscription_requests_dashboard_text(counts, amounts)
     markup = subscription_requests_dashboard_keyboard(counts)
     if isinstance(target, CallbackQuery):
         if target.message:
@@ -1079,6 +1114,13 @@ def analysis_list_keyboard(
 
 def analysis_detail_keyboard(request_id: int, current_status: str, list_status: str, page: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    if current_status in {"new", "paid"}:
+        rows.append([
+            InlineKeyboardButton(
+                text="🛠 Взять в работу",
+                callback_data=f"an:work:{request_id}:{list_status}:{page}",
+            )
+        ])
     status_buttons: list[InlineKeyboardButton] = []
     for status, label in ANALYSIS_STATUS_LABELS.items():
         if status == current_status:
@@ -1206,6 +1248,7 @@ def users_list_keyboard(items: list[tuple[User, UserAccess | None]], page: int, 
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"usr:list:{page+1}"))
     if nav:
         rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔎 Найти по Telegram ID", callback_data="usr:search")])
     rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=f"usr:list:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1214,14 +1257,48 @@ def user_detail_keyboard(user_id: int, page: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Выдать trial 3", callback_data=f"usr:trial:{user_id}:{page}")],
         [InlineKeyboardButton(text="💳 Выдать paid", callback_data=f"usr:paid:{user_id}:{page}")],
+        [
+            InlineKeyboardButton(text="💳 Заявки подписки", callback_data=f"usr:subreq:{user_id}:{page}"),
+            InlineKeyboardButton(text="🔎 Заявки анализа", callback_data=f"usr:anreq:{user_id}:{page}"),
+        ],
         [InlineKeyboardButton(text="⛔ Отключить доступ", callback_data=f"usr:disable:{user_id}:{page}")],
         [InlineKeyboardButton(text="⬅️ К пользователям", callback_data=f"usr:list:{page}")],
     ])
 
 
-def format_user_detail(user: User, access: UserAccess | None, delivered: int, failed: int) -> str:
+def _format_user_subscription_requests(requests: list[SubscriptionRequest]) -> str:
+    if not requests:
+        return "пока нет"
+    lines = []
+    for request in requests:
+        lines.append(
+            f"#{request.id} · {_subscription_status_label(request.status)} · "
+            f"{request.plan_title} · {format_price(request.price_rub)}"
+        )
+    return "\n".join(lines)
+
+
+def _format_user_analysis_requests(requests: list[MatchAnalysisRequest]) -> str:
+    if not requests:
+        return "пока нет"
+    lines = []
+    for request in requests:
+        lines.append(f"#{request.id} · {_analysis_status_label(request.status)} · {_fmt_dt(request.created_at, '%d.%m %H:%M')}")
+    return "\n".join(lines)
+
+
+def format_user_detail(
+    user: User,
+    access: UserAccess | None,
+    delivered: int,
+    failed: int,
+    subscription_requests: list[SubscriptionRequest] | None = None,
+    analysis_requests: list[MatchAnalysisRequest] | None = None,
+) -> str:
     username = f"@{user.username}" if user.username else "—"
     created = _fmt_dt(user.created_at)
+    subscription_requests = subscription_requests or []
+    analysis_requests = analysis_requests or []
     return (
         "👤 Пользователь\n\n"
         f"Имя: {_user_name(user)}\n"
@@ -1230,9 +1307,39 @@ def format_user_detail(user: User, access: UserAccess | None, delivered: int, fa
         f"Активен: {'да' if user.is_active else 'нет'}\n"
         f"Создан: {created}\n\n"
         f"Доступ: {_access_label(access)}\n"
+        f"Тариф: {access.plan_id if access and access.plan_id else '—'}\n"
+        f"Осталось платных сигналов: {access.signals_remaining if access and access.signals_remaining is not None else '—'}\n"
         f"Успешных доставок: {delivered}\n"
-        f"Ошибок доставки: {failed}"
+        f"Ошибок доставки: {failed}\n\n"
+        f"Последние заявки на подписку:\n{_format_user_subscription_requests(subscription_requests)}\n\n"
+        f"Последние заявки на анализ:\n{_format_user_analysis_requests(analysis_requests)}"
     )
+
+
+def user_subscription_requests_keyboard(requests: list[SubscriptionRequest], user_id: int, page: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for request in requests:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"#{request.id} · {_subscription_status_label(request.status)} · {request.plan_title}",
+                callback_data=f"subadm:view:{request.id}:{request.status}:0",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="⬅️ К пользователю", callback_data=f"usr:view:{user_id}:{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_analysis_requests_keyboard(requests: list[MatchAnalysisRequest], user_id: int, page: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for request in requests:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"#{request.id} · {_analysis_status_label(request.status)} · {_fmt_dt(request.created_at, '%d.%m %H:%M')}",
+                callback_data=f"an:view:{request.id}:{request.status}:0",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="⬅️ К пользователю", callback_data=f"usr:view:{user_id}:{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def show_users_list(target: Message | CallbackQuery, page: int = 0) -> None:
@@ -1282,8 +1389,20 @@ async def show_user_detail(callback: CallbackQuery, user_id: int, page: int) -> 
         user, access = row
         delivered = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.user_id == user.id, SignalDelivery.status == "sent")) or 0)
         failed = int(await session.scalar(select(func.count(SignalDelivery.id)).where(SignalDelivery.user_id == user.id, SignalDelivery.status == "failed")) or 0)
+        subscription_requests = list((await session.scalars(
+            select(SubscriptionRequest)
+            .where(SubscriptionRequest.user_id == user.id)
+            .order_by(desc(SubscriptionRequest.created_at))
+            .limit(3)
+        )).all())
+        analysis_requests = list((await session.scalars(
+            select(MatchAnalysisRequest)
+            .where(MatchAnalysisRequest.user_id == user.id)
+            .order_by(desc(MatchAnalysisRequest.created_at))
+            .limit(3)
+        )).all())
     await callback.message.edit_text(
-        format_user_detail(user, access, delivered, failed),
+        format_user_detail(user, access, delivered, failed, subscription_requests, analysis_requests),
         reply_markup=user_detail_keyboard(user_id, page),
     )
     await callback.answer()
@@ -1317,6 +1436,46 @@ async def subscription_request_view_callback(callback: CallbackQuery) -> None:
     await show_subscription_request_detail(callback, int(request_id_raw), status, int(page_raw))
 
 
+async def _activate_subscription_request(request_id: int) -> tuple[str | None, int | None]:
+    activation_text: str | None = None
+    user_telegram_id: int | None = None
+    async with SessionFactory() as session:
+        request = await session.get(SubscriptionRequest, request_id)
+        if request is None:
+            return None, None
+        previous_status = request.status
+        request.status = "done"
+        request.updated_at = datetime.utcnow()
+        user = await session.get(User, request.user_id)
+        if user is not None:
+            await grant_subscription_access(session, user, request)
+            user_telegram_id = user.telegram_id
+            if previous_status not in {"paid", "done"}:
+                activation_text = format_subscription_activation_user_text(request)
+        await session.commit()
+    return activation_text, user_telegram_id
+
+
+@router.callback_query(F.data.startswith("subadm:activate:"))
+async def subscription_request_activate_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, request_id_raw, list_status, page_raw = callback.data.split(":")
+    request_id = int(request_id_raw)
+    page = int(page_raw)
+    activation_text, user_telegram_id = await _activate_subscription_request(request_id)
+    if activation_text is None and user_telegram_id is None:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+    if activation_text and user_telegram_id is not None:
+        try:
+            await callback.bot.send_message(chat_id=user_telegram_id, text=activation_text)
+        except Exception:
+            pass
+    await callback.answer("Подписка активирована и заявка обработана", show_alert=True)
+    await show_subscription_request_detail(callback, request_id, list_status, page)
+
+
 @router.callback_query(F.data.startswith("subadm:status:"))
 async def subscription_request_status_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id) or not callback.data:
@@ -1327,18 +1486,29 @@ async def subscription_request_status_callback(callback: CallbackQuery) -> None:
         return
     request_id = int(request_id_raw)
     page = int(page_raw)
+    activation_text: str | None = None
+    user_telegram_id: int | None = None
     async with SessionFactory() as session:
         request = await session.get(SubscriptionRequest, request_id)
         if request is None:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
+        previous_status = request.status
         request.status = new_status
         request.updated_at = datetime.utcnow()
         if new_status in {"paid", "done"}:
             user = await session.get(User, request.user_id)
             if user is not None:
                 await grant_subscription_access(session, user, request)
+                user_telegram_id = user.telegram_id
+                if previous_status not in {"paid", "done"}:
+                    activation_text = format_subscription_activation_user_text(request)
         await session.commit()
+    if activation_text and user_telegram_id is not None:
+        try:
+            await callback.bot.send_message(chat_id=user_telegram_id, text=activation_text)
+        except Exception:
+            pass
     await callback.answer(f"Статус изменён: {_subscription_status_label(new_status)}", show_alert=True)
     await show_subscription_request_detail(callback, request_id, list_status, page)
 
@@ -1373,6 +1543,36 @@ async def analysis_view_callback(callback: CallbackQuery) -> None:
     await show_analysis_detail(callback, int(request_id_raw), status, int(page_raw))
 
 
+@router.callback_query(F.data.startswith("an:work:"))
+async def analysis_take_to_work_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, request_id_raw, list_status, page_raw = callback.data.split(":")
+    request_id = int(request_id_raw)
+    page = int(page_raw)
+    status_text: str | None = None
+    user_telegram_id: int | None = None
+    async with SessionFactory() as session:
+        request = await session.get(MatchAnalysisRequest, request_id)
+        if request is None:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        previous_status = request.status
+        request.status = "in_progress"
+        request.updated_at = datetime.utcnow()
+        if previous_status != "in_progress":
+            status_text = format_analysis_status_user_text(request)
+            user_telegram_id = request.telegram_id
+        await session.commit()
+    if status_text and user_telegram_id is not None:
+        try:
+            await callback.bot.send_message(chat_id=user_telegram_id, text=status_text)
+        except Exception:
+            pass
+    await callback.answer("Заявка взята в работу", show_alert=True)
+    await show_analysis_detail(callback, request_id, list_status, page)
+
+
 @router.callback_query(F.data.startswith("an:status:"))
 async def analysis_status_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id) or not callback.data:
@@ -1383,14 +1583,25 @@ async def analysis_status_callback(callback: CallbackQuery) -> None:
         return
     request_id = int(request_id_raw)
     page = int(page_raw)
+    status_text: str | None = None
+    user_telegram_id: int | None = None
     async with SessionFactory() as session:
         request = await session.get(MatchAnalysisRequest, request_id)
         if request is None:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
+        previous_status = request.status
         request.status = new_status
         request.updated_at = datetime.utcnow()
+        if previous_status != new_status:
+            status_text = format_analysis_status_user_text(request)
+            user_telegram_id = request.telegram_id
         await session.commit()
+    if status_text and user_telegram_id is not None:
+        try:
+            await callback.bot.send_message(chat_id=user_telegram_id, text=status_text)
+        except Exception:
+            pass
     await callback.answer(f"Статус изменён: {_analysis_status_label(new_status)}", show_alert=True)
     await show_analysis_detail(callback, request_id, list_status, page)
 
@@ -1416,6 +1627,88 @@ async def user_view_callback(callback: CallbackQuery) -> None:
         return
     _, _, user_id_raw, page_raw = callback.data.split(":")
     await show_user_detail(callback, int(user_id_raw), int(page_raw))
+
+
+@router.callback_query(F.data == "usr:search")
+async def user_search_start_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await state.set_state(UserSearchStates.waiting_for_telegram_id)
+    if callback.message:
+        await callback.message.answer("Введите Telegram ID пользователя.")
+    await callback.answer()
+
+
+@router.message(UserSearchStates.waiting_for_telegram_id)
+async def user_search_by_telegram_id(message: Message, state: FSMContext) -> None:
+    if not is_admin(message):
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit():
+        await message.answer("Telegram ID должен быть числом. Попробуйте ещё раз.")
+        return
+    telegram_id = int(raw)
+    async with SessionFactory() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+    await state.clear()
+    if user is None:
+        await message.answer("Пользователь с таким Telegram ID не найден.")
+        return
+    await message.answer(
+        f"Пользователь найден: {_user_name(user)}\nTelegram ID: {user.telegram_id}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть карточку", callback_data=f"usr:view:{user.id}:0")],
+            [InlineKeyboardButton(text="⬅️ К пользователям", callback_data="usr:list:0")],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("usr:subreq:"))
+async def user_subscription_requests_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, user_id_raw, page_raw = callback.data.split(":")
+    user_id = int(user_id_raw)
+    page = int(page_raw)
+    async with SessionFactory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        requests = list((await session.scalars(
+            select(SubscriptionRequest)
+            .where(SubscriptionRequest.user_id == user.id)
+            .order_by(desc(SubscriptionRequest.created_at))
+            .limit(10)
+        )).all())
+    text = f"💳 Заявки на подписку\n\nПользователь: {_user_name(user)}\nВсего показано: {len(requests)}"
+    if callback.message:
+        await callback.message.edit_text(text, reply_markup=user_subscription_requests_keyboard(requests, user_id, page))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("usr:anreq:"))
+async def user_analysis_requests_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
+        return
+    _, _, user_id_raw, page_raw = callback.data.split(":")
+    user_id = int(user_id_raw)
+    page = int(page_raw)
+    async with SessionFactory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        requests = list((await session.scalars(
+            select(MatchAnalysisRequest)
+            .where(MatchAnalysisRequest.user_id == user.id)
+            .order_by(desc(MatchAnalysisRequest.created_at))
+            .limit(10)
+        )).all())
+    text = f"🔎 Заявки на анализ\n\nПользователь: {_user_name(user)}\nВсего показано: {len(requests)}"
+    if callback.message:
+        await callback.message.edit_text(text, reply_markup=user_analysis_requests_keyboard(requests, user_id, page))
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("usr:trial:"))
@@ -1471,12 +1764,21 @@ async def user_disable_access_callback(callback: CallbackQuery) -> None:
 def admin_settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Изменить реквизиты анализа", callback_data="admset:analysis_payment")],
-        [InlineKeyboardButton(text="👤 Изменить контакт специалиста", callback_data="admset:analysis_contact")],
+        [InlineKeyboardButton(text="👤 Изменить контакт анализа", callback_data="admset:analysis_contact")],
+        [InlineKeyboardButton(text="💳 Изменить реквизиты подписки", callback_data="admset:subscription_payment")],
+        [InlineKeyboardButton(text="👤 Изменить контакт подписки", callback_data="admset:subscription_contact")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="admset:refresh")],
     ])
 
 
-def format_admin_settings_text(settings, rules: dict, payment_details: str, specialist_contact: str) -> str:
+def format_admin_settings_text(
+    settings,
+    rules: dict,
+    analysis_payment_details: str,
+    analysis_specialist_contact: str,
+    subscription_payment_details: str,
+    subscription_specialist_contact: str,
+) -> str:
     signal = rules["signal"]
     high = rules["high_confidence"]
     return (
@@ -1502,11 +1804,14 @@ async def show_admin_settings(target: Message | CallbackQuery) -> None:
     rules = reload_signal_rules()
     async with SessionFactory() as session:
         analysis_config = await get_analysis_payment_config(session)
+        subscription_config = await get_subscription_payment_config(session)
     text = format_admin_settings_text(
         settings,
         rules,
         analysis_config.payment_details,
         analysis_config.specialist_contact,
+        subscription_config.payment_details,
+        subscription_config.specialist_contact,
     )
     markup = admin_settings_keyboard()
     if isinstance(target, CallbackQuery):
@@ -1586,4 +1891,36 @@ async def admin_save_analysis_contact(message: Message, state: FSMContext) -> No
         return
     await state.clear()
     await message.answer("Контакт специалиста обновлён.")
+    await show_admin_settings(message)
+
+
+@router.message(AdminSettingsStates.waiting_for_subscription_payment_details)
+async def admin_save_subscription_payment(message: Message, state: FSMContext) -> None:
+    if not is_admin(message):
+        return
+    try:
+        async with SessionFactory() as session:
+            await set_bot_setting(session, SUBSCRIPTION_PAYMENT_DETAILS_KEY, message.text or "", max_length=2000)
+            await session.commit()
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    await state.clear()
+    await message.answer("Реквизиты для подписки обновлены.")
+    await show_admin_settings(message)
+
+
+@router.message(AdminSettingsStates.waiting_for_subscription_specialist_contact)
+async def admin_save_subscription_contact(message: Message, state: FSMContext) -> None:
+    if not is_admin(message):
+        return
+    try:
+        async with SessionFactory() as session:
+            await set_bot_setting(session, SUBSCRIPTION_SPECIALIST_CONTACT_KEY, message.text or "", max_length=255)
+            await session.commit()
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    await state.clear()
+    await message.answer("Контакт специалиста по подпискам обновлён.")
     await show_admin_settings(message)

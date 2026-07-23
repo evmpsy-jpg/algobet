@@ -7,6 +7,7 @@ from app.services.match_analysis import (
     create_match_analysis_request,
     format_analysis_request_admin_text,
     format_analysis_request_user_text,
+    format_analysis_status_user_text,
     validate_match_analysis_text,
 )
 
@@ -96,3 +97,21 @@ def test_format_analysis_request_admin_text_contains_user_and_match() -> None:
     assert "#8" in text
     assert "@tester" in text
     assert "Игрок 1 vs Игрок 2" in text
+
+
+def test_format_analysis_status_user_text_contains_status_message() -> None:
+    request = MatchAnalysisRequest(
+        id=9,
+        user_id=1,
+        telegram_id=111,
+        username="tester",
+        match_text="Игрок 1 vs Игрок 2",
+        status="in_progress",
+        specialist_contact="@spec",
+    )
+
+    text = format_analysis_status_user_text(request)
+
+    assert "#9" in text
+    assert "в работу" in text
+    assert "@spec" in text

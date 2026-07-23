@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import SubscriptionRequest, User
-from app.services.bot_settings import get_analysis_payment_config
+from app.services.bot_settings import get_subscription_payment_config
 
 
 @dataclass(frozen=True)
@@ -125,7 +125,7 @@ async def create_subscription_request(session: AsyncSession, user: User, plan_id
     plan = get_subscription_plan(plan_id)
     if plan is None:
         raise ValueError("Тариф не найден.")
-    payment_config = await get_analysis_payment_config(session)
+    payment_config = await get_subscription_payment_config(session)
     request = SubscriptionRequest(
         user_id=user.id,
         telegram_id=user.telegram_id,
@@ -147,3 +147,25 @@ async def create_subscription_request(session: AsyncSession, user: User, plan_id
     session.add(request)
     await session.flush()
     return request
+
+
+def format_subscription_activation_user_text(request: SubscriptionRequest) -> str:
+    if request.signals_limit is not None:
+        access_line = f"Осталось сигналов: {request.signals_limit}"
+    elif request.duration_hours is not None:
+        access_line = f"Срок доступа: {request.duration_hours} часов"
+    elif request.duration_days is not None:
+        access_line = f"Срок доступа: {request.duration_days} дней"
+    else:
+        access_line = "Доступ активирован без ограничения по сроку."
+
+    return "\n".join([
+        "✅ Подписка активирована.",
+        "",
+        f"Заявка: #{request.id}",
+        f"Тариф: {request.plan_title}",
+        f"Условия: {request.plan_description}",
+        access_line,
+        "",
+        "Теперь сигналы будут приходить по условиям выбранного тарифа.",
+    ])

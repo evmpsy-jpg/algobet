@@ -79,3 +79,22 @@ async def create_match_analysis_request(
     session.add(request)
     await session.flush()
     return request
+
+
+def format_analysis_status_user_text(request: MatchAnalysisRequest) -> str:
+    status_messages = {
+        "paid": "Оплата по заявке отмечена.",
+        "in_progress": "Специалист взял заявку в работу.",
+        "done": "Анализ готов. Специалист свяжется с вами по заявке.",
+        "cancelled": "Заявка отменена. Если это ошибка, напишите специалисту.",
+    }
+    message = status_messages.get(request.status)
+    if message is None:
+        return ""
+    return "\n".join([
+        f"🔎 Заявка на анализ #{request.id}",
+        "",
+        message,
+        "",
+        f"Контакт специалиста: {request.specialist_contact or '—'}",
+    ])

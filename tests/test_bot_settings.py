@@ -5,7 +5,10 @@ from app.database.models import Base
 from app.services.bot_settings import (
     ANALYSIS_PAYMENT_DETAILS_KEY,
     ANALYSIS_SPECIALIST_CONTACT_KEY,
+    SUBSCRIPTION_PAYMENT_DETAILS_KEY,
+    SUBSCRIPTION_SPECIALIST_CONTACT_KEY,
     get_analysis_payment_config,
+    get_subscription_payment_config,
     normalize_bot_setting_value,
     set_bot_setting,
 )
@@ -56,4 +59,22 @@ async def test_set_bot_setting_updates_existing_value() -> None:
 
         assert second.id == first.id
         assert second.value == "Второе"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_subscription_payment_config_uses_separate_saved_values() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        await set_bot_setting(session, ANALYSIS_PAYMENT_DETAILS_KEY, "Анализ карта")
+        await set_bot_setting(session, SUBSCRIPTION_PAYMENT_DETAILS_KEY, "Подписка карта")
+        await set_bot_setting(session, SUBSCRIPTION_SPECIALIST_CONTACT_KEY, "@subspec")
+        await session.commit()
+
+        analysis_config = await get_analysis_payment_config(session)
+        subscription_config = await get_subscription_payment_config(session)
+
+        assert analysis_config.payment_details == "Анализ карта"
+        assert subscription_config.payment_details == "Подписка карта"
+        assert subscription_config.specialist_contact == "@subspec"
     await engine.dispose()

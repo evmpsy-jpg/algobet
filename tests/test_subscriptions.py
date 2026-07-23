@@ -3,9 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, SubscriptionRequest, User
+from app.services.bot_settings import SUBSCRIPTION_PAYMENT_DETAILS_KEY, SUBSCRIPTION_SPECIALIST_CONTACT_KEY, set_bot_setting
 from app.services.subscriptions import (
     create_subscription_request,
     format_price,
+    format_subscription_activation_user_text,
     format_subscription_plans_text,
     format_subscription_request_admin_text,
     format_subscription_request_user_text,
@@ -62,6 +64,8 @@ async def test_create_subscription_request_persists_selected_plan() -> None:
         user = make_user()
         session.add(user)
         await session.flush()
+        await set_bot_setting(session, SUBSCRIPTION_PAYMENT_DETAILS_KEY, "Подписка карта")
+        await set_bot_setting(session, SUBSCRIPTION_SPECIALIST_CONTACT_KEY, "@subspec")
 
         request = await create_subscription_request(session, user, "all_50")
         await session.commit()
@@ -73,6 +77,8 @@ async def test_create_subscription_request_persists_selected_plan() -> None:
         assert saved.plan_title == "Все сигналы 95%"
         assert saved.signals_limit == 50
         assert saved.price_rub == 7000
+        assert saved.payment_details == "Подписка карта"
+        assert saved.specialist_contact == "@subspec"
     await engine.dispose()
 
 
@@ -103,3 +109,28 @@ def test_format_subscription_request_texts_contain_plan_and_price() -> None:
     assert "@spec" in user_text
     assert "Новая заявка" in admin_text
     assert "@tester" in admin_text
+
+
+def test_format_subscription_activation_user_text_contains_access_terms() -> None:
+    request = SubscriptionRequest(
+        id=6,
+        user_id=1,
+        telegram_id=111,
+        username="tester",
+        plan_id="included_48h",
+        plan_group="included",
+        plan_title="Всё включено",
+        plan_description="48 часов",
+        price_rub=4500,
+        duration_hours=48,
+        includes_vip=True,
+        includes_all_signals=True,
+        includes_analytics=True,
+    )
+
+    text = format_subscription_activation_user_text(request)
+
+    assert "Подписка активирована" in text
+    assert "#6" in text
+    assert "Всё включено" in text
+    assert "48 часов" in text

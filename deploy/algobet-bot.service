@@ -1,0 +1,19 @@
+[Unit]
+Description=Algobet Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=algobet
+Group=algobet
+WorkingDirectory=/opt/algobet
+EnvironmentFile=/opt/algobet/.env
+ExecStart=/opt/algobet/.venv/bin/python /opt/algobet/run.py
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

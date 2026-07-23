@@ -11,10 +11,12 @@ from app.settings import get_settings
 
 ANALYSIS_PAYMENT_DETAILS_KEY = "analysis.payment_details"
 ANALYSIS_SPECIALIST_CONTACT_KEY = "analysis.specialist_contact"
+SUBSCRIPTION_PAYMENT_DETAILS_KEY = "subscription.payment_details"
+SUBSCRIPTION_SPECIALIST_CONTACT_KEY = "subscription.specialist_contact"
 
 
 @dataclass(frozen=True)
-class AnalysisPaymentConfig:
+class PaymentConfig:
     payment_details: str
     specialist_contact: str
 
@@ -48,7 +50,7 @@ async def set_bot_setting(session: AsyncSession, key: str, value: str, *, max_le
     return setting
 
 
-async def get_analysis_payment_config(session: AsyncSession) -> AnalysisPaymentConfig:
+async def get_analysis_payment_config(session: AsyncSession) -> PaymentConfig:
     settings = get_settings()
     payment_details = await get_bot_setting(
         session,
@@ -60,4 +62,18 @@ async def get_analysis_payment_config(session: AsyncSession) -> AnalysisPaymentC
         ANALYSIS_SPECIALIST_CONTACT_KEY,
         settings.analysis_specialist_contact,
     )
-    return AnalysisPaymentConfig(payment_details=payment_details, specialist_contact=specialist_contact)
+    return PaymentConfig(payment_details=payment_details, specialist_contact=specialist_contact)
+
+async def get_subscription_payment_config(session: AsyncSession) -> PaymentConfig:
+    settings = get_settings()
+    payment_details = await get_bot_setting(
+        session,
+        SUBSCRIPTION_PAYMENT_DETAILS_KEY,
+        settings.analysis_payment_details,
+    )
+    specialist_contact = await get_bot_setting(
+        session,
+        SUBSCRIPTION_SPECIALIST_CONTACT_KEY,
+        settings.analysis_specialist_contact,
+    )
+    return PaymentConfig(payment_details=payment_details, specialist_contact=specialist_contact)

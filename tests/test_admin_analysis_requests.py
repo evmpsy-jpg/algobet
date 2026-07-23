@@ -68,6 +68,7 @@ def test_analysis_detail_keyboard_changes_status_and_goes_back() -> None:
 
     callbacks = button_callbacks(markup)
 
+    assert "an:work:12:new:0" in callbacks
     assert "an:status:12:paid:new:0" in callbacks
     assert "an:status:12:in_progress:new:0" in callbacks
     assert "an:list:new:0" in callbacks
@@ -83,3 +84,9 @@ def test_format_analysis_request_detail_contains_request_user_and_match() -> Non
     assert "Игрок 1 — Игрок 2" in text
     assert "Карта 0000" in text
     assert "@spec" in text
+
+
+def test_analysis_detail_keyboard_hides_work_button_for_done_request() -> None:
+    markup = analysis_detail_keyboard(12, current_status="done", list_status="done", page=0)
+
+    assert "an:work:12:done:0" not in button_callbacks(markup)
