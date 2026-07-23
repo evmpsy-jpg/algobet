@@ -1,6 +1,6 @@
 import pytest
 
-from app.handlers.user import subscription_plans_keyboard
+from app.handlers.user import subscription_group_keyboard, subscription_plans_keyboard
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -144,4 +144,13 @@ def test_subscription_plans_keyboard_has_main_menu_button() -> None:
     button = markup.inline_keyboard[-1][0]
 
     assert button.callback_data == "sub:main_menu"
-    assert "??????? ????" in button.text
+    assert "\u0413\u043b\u0430\u0432\u043d\u043e\u0435 \u043c\u0435\u043d\u044e" in button.text
+
+
+def test_subscription_group_keyboard_has_main_menu_button() -> None:
+    markup = subscription_group_keyboard("vip")
+
+    button = markup.inline_keyboard[-1][0]
+
+    assert button.callback_data == "sub:main_menu"
+    assert "\u0413\u043b\u0430\u0432\u043d\u043e\u0435 \u043c\u0435\u043d\u044e" in button.text
