@@ -1,0 +1,14 @@
+.git
+.pytest_cache
+.venv
+venv
+.ssh
+__pycache__
+*.pyc
+.env
+data
+uploads
+*.db
+*.sqlite3
+*.xlsx
+*.xls

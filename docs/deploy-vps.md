@@ -119,3 +119,39 @@ The web admin can be added as a separate FastAPI app behind nginx:
 - nginx terminates HTTPS and proxies to localhost.
 
 Do not expose the SQLite file or `.env` through nginx.
+
+## Optional Docker Compose Run
+
+The bot can also run through Docker Compose. Do not run the `systemd` Python service and Docker container at the same time, because Telegram polling must have only one active bot process.
+
+Install Docker on Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2
+sudo systemctl enable --now docker
+```
+
+Stop the old service:
+
+```bash
+sudo systemctl stop algobet-bot
+sudo systemctl disable algobet-bot
+```
+
+Start the bot with Docker Compose:
+
+```bash
+cd /opt/algobet
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+Useful commands:
+
+```bash
+docker compose ps
+docker compose logs -n 100 bot
+docker compose restart bot
+docker compose down
+```

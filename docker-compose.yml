@@ -1,0 +1,14 @@
+services:
+  bot:
+    build: .
+    image: algobet-bot:latest
+    container_name: algobet-bot
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./excel_mapping.yaml:/app/excel_mapping.yaml:ro
+      - ./signal_rules.yaml:/app/signal_rules.yaml:ro
+    restart: unless-stopped
+    stop_signal: SIGINT
