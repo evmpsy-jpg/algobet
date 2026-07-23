@@ -85,20 +85,27 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     # ---------------------------------------------------------
     # Первичные условия кандидатов.
     #
-    # P1: EG == 5 или CS входит в {8, 9, 10}
-    # P2: EH == 5 или CT входит в {8, 9, 10}
+    # Все сигналы:
+    # P1: DG входит в {8, 9, 10}
+    # P2: DH входит в {-8, -9, -10}
+    #
+    # VIP сигналы:
+    # P1: EG == 5 и CS входит в {8, 9, 10}
+    # P2: EH == 5 и CT входит в {8, 9, 10}
     # ---------------------------------------------------------
-    p1_base = _base_condition(
-        match.p1_exact,
-        match.p1_range,
-        rules["p1"],
-    )
+    all_p1_allowed = {8.0, 9.0, 10.0}
+    all_p2_allowed = {-8.0, -9.0, -10.0}
+    vip_range_allowed = {8.0, 9.0, 10.0}
 
-    p2_base = _base_condition(
-        match.p2_exact,
-        match.p2_range,
-        rules["p2"],
-    )
+    p1_all = match.all_signal_p1 in all_p1_allowed
+    p2_all = match.all_signal_p2 in all_p2_allowed
+    p1_vip = match.p1_exact == 5 and match.p1_range in vip_range_allowed
+    p2_vip = match.p2_exact == 5 and match.p2_range in vip_range_allowed
+
+    p1_base = p1_all or p1_vip
+    p2_base = p2_all or p2_vip
+    p1_signal_group = "vip" if p1_vip else "all" if p1_all else None
+    p2_signal_group = "vip" if p2_vip else "all" if p2_all else None
 
     traces.append(
         _trace(
@@ -106,10 +113,11 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             label="Первичное условие P1",
             passed=p1_base,
             actual=(
+                f"DG={match.all_signal_p1}; "
                 f"EG={match.p1_exact}; "
                 f"CS={match.p1_range}"
             ),
-            expected="EG=5 или CS∈{8,9,10}",
+            expected="ALL: DG∈{8,9,10}; VIP: EG=5 и CS∈{8,9,10}",
             side=1,
         )
     )
@@ -120,10 +128,11 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             label="Первичное условие P2",
             passed=p2_base,
             actual=(
+                f"DH={match.all_signal_p2}; "
                 f"EH={match.p2_exact}; "
                 f"CT={match.p2_range}"
             ),
-            expected="EH=5 или CT∈{8,9,10}",
+            expected="ALL: DH∈{-8,-9,-10}; VIP: EH=5 и CT∈{8,9,10}",
             side=2,
         )
     )
@@ -341,6 +350,12 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         else match.p2_exact
     )
 
+    signal_group = (
+        p1_signal_group
+        if side == 1
+        else p2_signal_group
+    )
+
     # ---------------------------------------------------------
     # Определение уровня сигнала.
     # ---------------------------------------------------------
@@ -422,6 +437,7 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         "confidence": probability,
         "probability": probability,
         "level": level,
+        "signal_group": signal_group,
         "title": title,
         "is_high_confidence": level == "TOP",
         "h2h_p1": match.h2h_p1,
@@ -448,7 +464,7 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         selected_player=selected_player,
         probability=probability,
         level=level,
-        signal_type=f"SET_{level}",
+        signal_type=f"SET_{str(signal_group).upper()}_{level}",
         traces=traces,
         payload=payload,
     )

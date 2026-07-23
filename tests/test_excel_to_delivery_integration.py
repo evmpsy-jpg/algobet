@@ -54,7 +54,7 @@ async def test_excel_import_creates_signals_and_delivers_trial_messages() -> Non
         scheduled_count = int(await session.scalar(select(func.count(ScheduledSignal.id))) or 0)
 
         assert summary.parsed_matches == 168
-        assert summary.scheduled_signals == 5
+        assert summary.scheduled_signals == 4
         assert match_count == summary.parsed_matches
         assert decision_log_count == summary.parsed_matches
         assert scheduled_count == summary.scheduled_signals
@@ -77,7 +77,7 @@ async def test_excel_import_creates_signals_and_delivers_trial_messages() -> Non
         assert len(deliveries) == 3
         assert all(delivery.status == "sent" for delivery in deliveries)
         assert sent_signals == 3
-        assert ready_signals == 2
+        assert ready_signals == 1
         assert access.free_signals_remaining == 0
         assert all("СИГНАЛ" in message for _, message in bot.messages)
 

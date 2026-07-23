@@ -42,6 +42,15 @@ def _signal_probability(signal_payload: dict | None) -> float | None:
         return None
 
 
+def _signal_group(signal_payload: dict | None) -> str | None:
+    if not isinstance(signal_payload, dict):
+        return None
+    value = signal_payload.get("signal_group")
+    if value is None:
+        return None
+    return str(value).strip().lower()
+
+
 def _paid_access_is_active(access: UserAccess, *, now: datetime) -> bool:
     if access.status != "active":
         return False
@@ -59,6 +68,12 @@ def subscription_allows_signal(access: UserAccess, signal_payload: dict | None) 
         return True
     if not any([access.includes_vip, access.includes_all_signals, access.includes_analytics]):
         return True
+
+    group = _signal_group(signal_payload)
+    if group == "vip":
+        return bool(access.includes_vip)
+    if group == "all":
+        return bool(access.includes_all_signals)
 
     probability = _signal_probability(signal_payload)
     if probability is None:

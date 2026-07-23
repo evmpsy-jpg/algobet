@@ -46,6 +46,8 @@ def normalize_match(parsed: ParsedMatch) -> MatchData:
         bf_p2=get("bf_p2"),
         probability_p1=get("probability_p1"),
         probability_p2=get("probability_p2"),
+        all_signal_p1=get("all_signal_p1"),
+        all_signal_p2=get("all_signal_p2"),
         p1_exact=get("p1_exact"),
         p2_exact=get("p2_exact"),
         p1_range=get("p1_range"),

@@ -42,7 +42,9 @@ def make_match(**overrides: object) -> MatchData:
         "bf_p2": 1.3,
         "probability_p1": 88,
         "probability_p2": 86,
-        "p1_exact": 5,
+        "all_signal_p1": 8,
+        "all_signal_p2": None,
+        "p1_exact": 0,
         "p2_exact": 0,
         "p1_range": 0,
         "p2_range": 0,
@@ -61,7 +63,10 @@ def make_match(**overrides: object) -> MatchData:
 def test_selects_p1_when_only_p1_qualifies() -> None:
     decision = evaluate_match(
         make_match(
-            p1_exact=5,
+            all_signal_p1=8,
+            all_signal_p2=None,
+            p1_exact=0,
+            p1_range=0,
             p2_exact=0,
             p2_range=0,
         )
@@ -69,31 +74,38 @@ def test_selects_p1_when_only_p1_qualifies() -> None:
 
     assert decision.suitable is True
     assert decision.side == 1
-    assert decision.selected_player == "Игрок 1"
+    assert decision.selected_player == "\u0418\u0433\u0440\u043e\u043a 1"
     assert decision.probability == 88
-
+    assert decision.payload["signal_group"] == "all"
+    assert decision.signal_type == "SET_ALL_STRONG"
 
 def test_selects_p2_when_only_p2_qualifies() -> None:
     decision = evaluate_match(
         make_match(
+            all_signal_p1=None,
+            all_signal_p2=-8,
             p1_exact=0,
             p1_range=0,
-            p2_exact=5,
+            p2_exact=0,
+            p2_range=0,
             probability_p2=91,
         )
     )
 
     assert decision.suitable is True
     assert decision.side == 2
-    assert decision.selected_player == "Игрок 2"
+    assert decision.selected_player == "\u0418\u0433\u0440\u043e\u043a 2"
     assert decision.probability == 91
-
+    assert decision.payload["signal_group"] == "all"
+    assert decision.signal_type == "SET_ALL_TOP"
 
 def test_selects_side_with_higher_probability_when_both_qualify() -> None:
     decision = evaluate_match(
         make_match(
-            p1_exact=5,
-            p2_exact=5,
+            all_signal_p1=8,
+            all_signal_p2=-8,
+            p1_exact=0,
+            p2_exact=0,
             probability_p1=86,
             probability_p2=92,
         )
@@ -108,8 +120,10 @@ def test_selects_side_with_higher_probability_when_both_qualify() -> None:
 def test_rejects_when_probabilities_are_equal() -> None:
     decision = evaluate_match(
         make_match(
-            p1_exact=5,
-            p2_exact=5,
+            all_signal_p1=8,
+            all_signal_p2=-8,
+            p1_exact=0,
+            p2_exact=0,
             probability_p1=90,
             probability_p2=90,
         )
@@ -135,6 +149,8 @@ def test_rejects_when_probabilities_are_equal() -> None:
 def test_rejects_match_when_neither_base_condition_passes() -> None:
     decision = evaluate_match(
         make_match(
+            all_signal_p1=None,
+            all_signal_p2=None,
             p1_exact=4,
             p1_range=7,
             p2_exact=4,
@@ -150,7 +166,8 @@ def test_rejects_match_when_neither_base_condition_passes() -> None:
 def test_p1_range_values_qualify(range_value: int) -> None:
     decision = evaluate_match(
         make_match(
-            p1_exact=0,
+            all_signal_p1=None,
+            p1_exact=5,
             p1_range=range_value,
             p2_exact=0,
             p2_range=0,
@@ -159,21 +176,108 @@ def test_p1_range_values_qualify(range_value: int) -> None:
 
     assert decision.suitable is True
     assert decision.side == 1
+    assert decision.payload["signal_group"] == "vip"
 
 
 @pytest.mark.parametrize("range_value", [8, 9, 10])
 def test_p2_range_values_qualify(range_value: int) -> None:
     decision = evaluate_match(
         make_match(
+            all_signal_p1=None,
+            all_signal_p2=None,
             p1_exact=0,
             p1_range=0,
-            p2_exact=0,
+            p2_exact=5,
             p2_range=range_value,
         )
     )
 
     assert decision.suitable is True
     assert decision.side == 2
+    assert decision.payload["signal_group"] == "vip"
+
+
+@pytest.mark.parametrize("all_value", [8, 9, 10])
+def test_all_signal_p1_values_qualify(all_value: int) -> None:
+    decision = evaluate_match(
+        make_match(
+            all_signal_p1=all_value,
+            all_signal_p2=None,
+            p1_exact=0,
+            p1_range=0,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 1
+    assert decision.payload["signal_group"] == "all"
+
+
+@pytest.mark.parametrize("all_value", [-8, -9, -10])
+def test_all_signal_p2_values_qualify(all_value: int) -> None:
+    decision = evaluate_match(
+        make_match(
+            all_signal_p1=None,
+            all_signal_p2=all_value,
+            p1_exact=0,
+            p1_range=0,
+            p2_exact=0,
+            p2_range=0,
+            probability_p2=91,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 2
+    assert decision.payload["signal_group"] == "all"
+
+
+def test_vip_p1_requires_exact_and_range() -> None:
+    exact_only = evaluate_match(make_match(all_signal_p1=None, p1_exact=5, p1_range=0))
+    range_only = evaluate_match(make_match(all_signal_p1=None, p1_exact=0, p1_range=8))
+    both = evaluate_match(make_match(all_signal_p1=None, p1_exact=5, p1_range=8))
+
+    assert exact_only.suitable is False
+    assert range_only.suitable is False
+    assert both.suitable is True
+    assert both.payload["signal_group"] == "vip"
+
+
+def test_vip_p2_requires_exact_and_range() -> None:
+    exact_only = evaluate_match(
+        make_match(all_signal_p1=None, all_signal_p2=None, p2_exact=5, p2_range=0)
+    )
+    range_only = evaluate_match(
+        make_match(all_signal_p1=None, all_signal_p2=None, p2_exact=0, p2_range=8)
+    )
+    both = evaluate_match(
+        make_match(
+            all_signal_p1=None,
+            all_signal_p2=None,
+            p2_exact=5,
+            p2_range=8,
+            probability_p2=91,
+        )
+    )
+
+    assert exact_only.suitable is False
+    assert range_only.suitable is False
+    assert both.suitable is True
+    assert both.side == 2
+    assert both.payload["signal_group"] == "vip"
+
+
+def test_vip_group_has_priority_when_all_and_vip_match() -> None:
+    decision = evaluate_match(
+        make_match(
+            all_signal_p1=8,
+            p1_exact=5,
+            p1_range=8,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.payload["signal_group"] == "vip"
 
 
 def test_boundary_values_are_accepted() -> None:
@@ -219,9 +323,12 @@ def test_p1_is_rejected_below_threshold(field: str, value: float) -> None:
 def test_p2_is_rejected_below_threshold(field: str, value: float) -> None:
     decision = evaluate_match(
         make_match(
+            all_signal_p1=None,
+            all_signal_p2=None,
             p1_exact=0,
             p1_range=0,
             p2_exact=5,
+            p2_range=8,
             **{field: value},
         )
     )
@@ -263,8 +370,10 @@ def test_rejects_when_h2h_games_are_below_current_minimum() -> None:
 def test_selects_p2_when_p1_probability_is_missing() -> None:
     decision = evaluate_match(
         make_match(
-            p1_exact=5,
-            p2_exact=5,
+            all_signal_p1=8,
+            all_signal_p2=-8,
+            p1_exact=0,
+            p2_exact=0,
             probability_p1=None,
             probability_p2=91,
         )
@@ -272,15 +381,16 @@ def test_selects_p2_when_p1_probability_is_missing() -> None:
 
     assert decision.suitable is True
     assert decision.side == 2
-    assert decision.selected_player == "Игрок 2"
+    assert decision.selected_player == "\u0418\u0433\u0440\u043e\u043a 2"
     assert decision.probability == 91
-
 
 def test_selects_p1_when_p2_probability_is_missing() -> None:
     decision = evaluate_match(
         make_match(
-            p1_exact=5,
-            p2_exact=5,
+            all_signal_p1=8,
+            all_signal_p2=-8,
+            p1_exact=0,
+            p2_exact=0,
             probability_p1=89,
             probability_p2=None,
         )
@@ -288,15 +398,16 @@ def test_selects_p1_when_p2_probability_is_missing() -> None:
 
     assert decision.suitable is True
     assert decision.side == 1
-    assert decision.selected_player == "Игрок 1"
+    assert decision.selected_player == "\u0418\u0433\u0440\u043e\u043a 1"
     assert decision.probability == 89
-
 
 def test_rejects_when_probabilities_are_missing() -> None:
     decision = evaluate_match(
         make_match(
-            p1_exact=5,
-            p2_exact=5,
+            all_signal_p1=8,
+            all_signal_p2=-8,
+            p1_exact=0,
+            p2_exact=0,
             probability_p1=None,
             probability_p2=None,
         )
@@ -304,13 +415,14 @@ def test_rejects_when_probabilities_are_missing() -> None:
 
     assert decision.suitable is False
     assert decision.side is None
-    assert "Нет вероятности" in decision.reason
+    assert "\u041d\u0435\u0442 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u043e\u0441\u0442\u0438" in decision.reason
 
 def test_accepts_exactly_five_h2h_games() -> None:
     decision = evaluate_match(
         make_match(
             h2h_games=5,
-            p1_exact=5,
+            all_signal_p1=8,
+            p1_exact=0,
             p2_exact=0,
             p2_range=0,
         )
@@ -319,12 +431,12 @@ def test_accepts_exactly_five_h2h_games() -> None:
     assert decision.suitable is True
     assert decision.side == 1
 
-
 def test_accepts_more_than_five_h2h_games() -> None:
     decision = evaluate_match(
         make_match(
             h2h_games=12,
-            p1_exact=5,
+            all_signal_p1=8,
+            p1_exact=0,
             p2_exact=0,
             p2_range=0,
         )

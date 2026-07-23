@@ -27,6 +27,8 @@ class MatchData:
     bf_p2: float | None = None
     probability_p1: float | None = None
     probability_p2: float | None = None
+    all_signal_p1: float | None = None
+    all_signal_p2: float | None = None
     p1_exact: float | None = None
     p2_exact: float | None = None
     p1_range: float | None = None
