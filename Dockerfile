@@ -13,6 +13,7 @@ COPY app ./app
 COPY run.py .
 COPY excel_mapping.yaml .
 COPY signal_rules.yaml .
+COPY templates ./templates
 
 RUN mkdir -p data uploads
 

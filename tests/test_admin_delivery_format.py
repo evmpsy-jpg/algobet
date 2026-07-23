@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.database.models import Match, ScheduledSignal, SignalDelivery, SignalResult, User
-from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, result_filter_keyboard
+from app.handlers.admin import format_sent_history_summary, format_signal_deliveries, result_filter_keyboard, signal_list_keyboard
 
 
 def make_match() -> Match:
@@ -28,6 +28,7 @@ def test_format_signal_deliveries_shows_success_and_error() -> None:
         match_id=1,
         status="sent",
         send_at=datetime(2026, 7, 21, 11, 40),
+        signal_payload={"signal_group": "all"},
         message_text="signal text",
     )
     user = User(
@@ -91,7 +92,7 @@ def test_format_sent_history_summary_shows_recent_signal_results() -> None:
         status="sent",
         send_at=datetime(2026, 7, 22, 7, 40),
         sent_at=datetime(2026, 7, 22, 7, 53),
-        signal_payload={"level": "TOP", "side": 1},
+        signal_payload={"level": "TOP", "side": 1, "signal_group": "vip"},
         message_text="signal text",
     )
     result = SignalResult(signal_id=10, status="won", source="auto")
@@ -108,7 +109,8 @@ def test_format_sent_history_summary_shows_recent_signal_results() -> None:
     assert "История выдачи сигналов" in text
     assert "Отправленных сигналов: 1" in text
     assert "22.07 10:53" in text
-    assert "✅ авто · TOP · П1" in text
+    assert "VIP" in text
+    assert "TOP" in text
     assert "доставки: ✅ 3 / ❌ 1 / ⏳ 0" in text
 
 def test_result_filter_keyboard_links_to_signal_and_history() -> None:
@@ -118,11 +120,36 @@ def test_result_filter_keyboard_links_to_signal_and_history() -> None:
         status="sent",
         send_at=datetime(2026, 7, 22, 7, 40),
         sent_at=datetime(2026, 7, 22, 7, 53),
-        signal_payload={"level": "TOP", "side": 1},
+        signal_payload={"level": "TOP", "side": 1, "signal_group": "vip"},
         message_text="signal text",
     )
 
     markup = result_filter_keyboard([(signal, make_match(), None)], "unrated", page=0, total=1)
 
+    assert "VIP" in markup.inline_keyboard[0][0].text
     assert markup.inline_keyboard[0][0].callback_data == "sig:view:10:sent:0"
     assert markup.inline_keyboard[-1][0].callback_data == "sig:history"
+
+
+def test_signal_list_keyboard_filters_by_signal_group() -> None:
+    signal = ScheduledSignal(
+        id=10,
+        match_id=1,
+        status="ready",
+        send_at=datetime(2026, 7, 22, 7, 40),
+        signal_payload={"level": "TOP", "side": 1, "signal_group": "vip"},
+        message_text="signal text",
+    )
+
+    markup = signal_list_keyboard([(signal, make_match(), None)], "ready", page=1, total=20, group_filter="vip")
+
+    filter_row = markup.inline_keyboard[0]
+    assert [button.callback_data for button in filter_row] == [
+        "sig:list:ready:0",
+        "sig:list:ready:0:vip",
+        "sig:list:ready:0:all",
+    ]
+    assert filter_row[1].text.startswith("* ")
+    assert "VIP" in markup.inline_keyboard[1][0].text
+    assert markup.inline_keyboard[2][0].callback_data == "sig:list:ready:0:vip"
+    assert markup.inline_keyboard[2][1].callback_data == "sig:list:ready:2:vip"

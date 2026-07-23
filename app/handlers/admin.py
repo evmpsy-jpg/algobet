@@ -92,6 +92,38 @@ def _fmt_dt(value: datetime | None, fmt: str = "%d.%m.%Y %H:%M") -> str:
     local = _local_dt(value)
     return local.strftime(fmt) if local else "—"
 
+
+def _signal_group_value(signal_or_payload: ScheduledSignal | dict | None) -> str | None:
+    if isinstance(signal_or_payload, ScheduledSignal):
+        payload = signal_or_payload.signal_payload or {}
+    elif isinstance(signal_or_payload, dict):
+        payload = signal_or_payload
+    else:
+        payload = {}
+    value = payload.get("signal_group")
+    if value is None:
+        return None
+    return str(value).strip().lower()
+
+
+def signal_group_label(signal_or_payload: ScheduledSignal | dict | None) -> str:
+    labels = {
+        "vip": "VIP",
+        "all": "Все сигналы",
+    }
+    value = _signal_group_value(signal_or_payload)
+    return labels.get(value, "—")
+
+
+def signal_group_short_label(signal_or_payload: ScheduledSignal | dict | None) -> str:
+    labels = {
+        "vip": "VIP",
+        "all": "ALL",
+    }
+    value = _signal_group_value(signal_or_payload)
+    return labels.get(value, "—")
+
+
 def _format_level_result_line(level: str, counter) -> str:
     return (
         f"{level}: ✅ {counter.won} / ❌ {counter.lost} / "
@@ -110,28 +142,50 @@ def signals_dashboard_keyboard(counts: dict[str, int]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+SIGNAL_GROUP_FILTER_LABELS = {
+    "any": "Все",
+    "vip": "VIP",
+    "all": "ALL",
+}
+
+
+def _signal_list_callback(status: str, page: int, group_filter: str = "any") -> str:
+    if group_filter == "any":
+        return f"sig:list:{status}:{page}"
+    return f"sig:list:{status}:{page}:{group_filter}"
+
+
 def signal_list_keyboard(
     items: list[tuple[ScheduledSignal, Match, SignalResult | None]],
     status: str,
     page: int,
     total: int,
+    group_filter: str = "any",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    rows.append([
+        InlineKeyboardButton(
+            text=("* " if group_filter == key else "") + label,
+            callback_data=_signal_list_callback(status, 0, key),
+        )
+        for key, label in SIGNAL_GROUP_FILTER_LABELS.items()
+    ])
     for signal, match, result in items:
         side = signal.signal_payload.get("side") if signal.signal_payload else None
         side_text = f"П{side}" if side in (1, 2) else "—"
         result_text = result_short_label(result.status if result else None)
+        group_text = signal_group_short_label(signal)
         rows.append([
             InlineKeyboardButton(
-                text=f"{match.match_time} · {match.player_1} — {match.player_2} · {side_text} · {result_text}",
+                text=f"{match.match_time} · {group_text} · {match.player_1} — {match.player_2} · {side_text} · {result_text}",
                 callback_data=f"sig:view:{signal.id}:{status}:{page}",
             )
         ])
     nav: list[InlineKeyboardButton] = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"sig:list:{status}:{page-1}"))
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=_signal_list_callback(status, page - 1, group_filter)))
     if (page + 1) * PAGE_SIZE < total:
-        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"sig:list:{status}:{page+1}"))
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=_signal_list_callback(status, page + 1, group_filter)))
     if nav:
         rows.append(nav)
     rows.append([InlineKeyboardButton(text="⬅️ К разделу сигналов", callback_data="sig:dashboard")])
@@ -156,9 +210,10 @@ def result_filter_keyboard(
         side = signal.signal_payload.get("side") if signal.signal_payload else None
         side_text = f"П{side}" if side in (1, 2) else "—"
         result_text = result_short_label(result.status if result else None)
+        group_text = signal_group_short_label(signal)
         rows.append([
             InlineKeyboardButton(
-                text=f"{match.match_time} · {match.player_1} — {match.player_2} · {side_text} · {result_text}",
+                text=f"{match.match_time} · {group_text} · {match.player_1} — {match.player_2} · {side_text} · {result_text}",
                 callback_data=f"sig:view:{signal.id}:sent:0",
             )
         ])
@@ -200,6 +255,7 @@ def format_decision_log(log: SignalDecisionLog, match: Match) -> str:
     status = "подходит" if log.suitable else "отклонён"
     side = f"П{log.side}" if log.side in (1, 2) else "—"
     probability = f"{log.probability:g}%" if log.probability is not None else "—"
+    group = signal_group_label(log.decision_payload or {})
     lines = [
         "🧾 Трассировка решения",
         "",
@@ -210,6 +266,7 @@ def format_decision_log(log: SignalDecisionLog, match: Match) -> str:
         f"Итог: {status}",
         f"Сторона: {side}",
         f"Вероятность: {probability}",
+        f"Тип: {group}",
         f"Уровень: {log.level or '—'}",
     ]
     if log.reason:
@@ -249,6 +306,7 @@ def format_signal_deliveries(
         "",
         f"Матч: {match.player_1} — {match.player_2}",
         f"Время сигнала: {_fmt_dt(signal.send_at)}",
+        f"Тип сигнала: {signal_group_label(signal)}",
         f"Статус сигнала: {signal.status}",
         "",
         f"Всего доставок: {len(rows)}",
@@ -300,14 +358,23 @@ def format_sent_history_summary(
         side = payload.get("side")
         side_text = f"П{side}" if side in (1, 2) else "—"
         level = payload.get("level") or "—"
+        group = signal_group_short_label(payload)
         sent_at = _fmt_dt(signal.sent_at or signal.send_at, "%d.%m %H:%M")
         counts = delivery_counts.get(signal.id, {})
         lines.extend([
-            f"• {sent_at} · {result_short_label(result.status if result else None)} {result_source_label(result.source if result else None)} · {level} · {side_text}",
+            f"• {sent_at} · {result_short_label(result.status if result else None)} {result_source_label(result.source if result else None)} · {group} · {level} · {side_text}",
             f"  {match.player_1} — {match.player_2}",
             f"  доставки: ✅ {counts.get('sent', 0)} / ❌ {counts.get('failed', 0)} / ⏳ {counts.get('pending', 0)}",
         ])
     return "\n".join(lines)[:3900]
+
+def _signal_group_filter_condition(group_filter: str):
+    if group_filter == "vip":
+        return ScheduledSignal.signal_payload["signal_group"].as_string() == "vip"
+    if group_filter == "all":
+        return ScheduledSignal.signal_payload["signal_group"].as_string() == "all"
+    return None
+
 
 async def get_signal_counts() -> dict[str, int]:
     async with SessionFactory() as session:
@@ -415,26 +482,39 @@ async def signals_dashboard_callback(callback: CallbackQuery) -> None:
 async def signals_list_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id) or not callback.data or not callback.message:
         return
-    _, _, status, page_raw = callback.data.split(":")
+    parts = callback.data.split(":")
+    _, _, status, page_raw, *rest = parts
     page = max(0, int(page_raw))
+    group_filter = rest[0] if rest else "any"
+    if group_filter not in SIGNAL_GROUP_FILTER_LABELS:
+        group_filter = "any"
+    group_condition = _signal_group_filter_condition(group_filter)
     async with SessionFactory() as session:
-        total = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == status)) or 0)
-        rows = (await session.execute(
+        count_query = select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == status)
+        list_query = (
             select(ScheduledSignal, Match, SignalResult)
             .join(Match, Match.id == ScheduledSignal.match_id)
             .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
             .where(ScheduledSignal.status == status)
+        )
+        if group_condition is not None:
+            count_query = count_query.where(group_condition)
+            list_query = list_query.where(group_condition)
+        total = int(await session.scalar(count_query) or 0)
+        rows = (await session.execute(
+            list_query
             .order_by(ScheduledSignal.send_at.asc())
             .offset(page * PAGE_SIZE)
             .limit(PAGE_SIZE)
         )).all()
     label = STATUS_LABELS.get(status, status)
+    group_label = SIGNAL_GROUP_FILTER_LABELS[group_filter]
     if not rows:
-        text = f"{label}\n\nСписок пуст."
+        text = f"{label} · {group_label}\n\nСписок пуст."
     else:
         pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-        text = f"{label}\n\nСтраница {page + 1} из {pages}. Выберите матч:"
-    await callback.message.edit_text(text, reply_markup=signal_list_keyboard(rows, status, page, total))
+        text = f"{label} · {group_label}\n\nСтраница {page + 1} из {pages}. Выберите матч:"
+    await callback.message.edit_text(text, reply_markup=signal_list_keyboard(rows, status, page, total, group_filter))
     await callback.answer()
 
 @router.callback_query(F.data.startswith("sig:rlist:"))
@@ -496,7 +576,12 @@ async def signal_view_callback(callback: CallbackQuery) -> None:
         await callback.answer("Сигнал не найден", show_alert=True)
         return
     signal, match, result = row
-    text = f"Результат: {result_full_label(result)}\n\n" + (signal.message_text or "Текст сигнала отсутствует")
+    header = (
+        f"Результат: {result_full_label(result)}\n"
+        f"Тип: {signal_group_label(signal)}\n"
+        f"Уровень: {(signal.signal_payload or {}).get('level') or '—'}\n\n"
+    )
+    text = header + (signal.message_text or "Текст сигнала отсутствует")
     await callback.message.edit_text(
         text,
         reply_markup=signal_detail_keyboard(signal.id, status, page),
