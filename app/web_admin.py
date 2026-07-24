@@ -13,8 +13,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from aiogram import Bot
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from sqlalchemy import desc, select
 
-from app.database.models import MatchAnalysisRequest, ScheduledSignal, SubscriptionRequest, User
+from app.database.models import MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, WebAdminActionLog
 from app.database.session import SessionFactory, init_db
 from app.services.access import disable_access, grant_subscription_access, grant_subscription_plan_access, grant_trial_access
 from app.services.signal_sender import process_delivery_now
@@ -73,7 +74,7 @@ def _auth_error() -> HTTPException:
     )
 
 
-def require_web_admin(credentials: Annotated[HTTPBasicCredentials | None, Depends(security)]) -> None:
+def require_web_admin(credentials: Annotated[HTTPBasicCredentials | None, Depends(security)]) -> str:
     configured_credentials = get_settings().web_admin_credentials
     if not configured_credentials:
         raise HTTPException(
@@ -90,6 +91,7 @@ def require_web_admin(credentials: Annotated[HTTPBasicCredentials | None, Depend
 
     if not hmac.compare_digest(credentials.password, expected_password):
         raise _auth_error()
+    return credentials.username
 
 
 def _token_href(path: str, token: str = "") -> str:
@@ -136,6 +138,14 @@ LABELS = {
     "analysis": "Анализ матча",
     "enabled": "Включен",
     "disabled": "Выключен",
+    "signal_result_update": "Изменение результата сигнала",
+    "request_status_update": "Изменение статуса заявки",
+    "user_access_update": "Изменение доступа пользователя",
+    "settings_update": "Изменение настроек",
+    "signal": "Сигнал",
+    "subscription_request": "Заявка на подписку",
+    "analysis_request": "Заявка на анализ",
+    "settings": "Настройки",
 }
 
 
@@ -262,29 +272,71 @@ def _user_access_buttons(user_id: int) -> str:
     return f'<div class="actions">{quick_actions}</div><div class="actions">{plan_actions}</div>'
 
 
-async def update_web_signal_result(session, signal_id: int, new_status: str) -> bool:
+async def log_web_admin_action(
+    session,
+    *,
+    actor_username: str,
+    action: str,
+    target_type: str,
+    target_id: str | int | None = None,
+    details: dict | None = None,
+) -> WebAdminActionLog:
+    log = WebAdminActionLog(
+        actor_username=actor_username,
+        action=action,
+        target_type=target_type,
+        target_id=str(target_id) if target_id is not None else None,
+        details=details or {},
+    )
+    session.add(log)
+    await session.flush()
+    return log
+
+
+async def update_web_signal_result(session, signal_id: int, new_status: str, *, actor_username: str | None = None) -> bool:
     if new_status not in SIGNAL_RESULT_WEB_STATUSES:
         raise ValueError("Unknown signal result status")
     signal = await session.get(ScheduledSignal, signal_id)
     if signal is None:
         return False
+    old_status = await session.scalar(select(SignalResult.status).where(SignalResult.signal_id == signal_id))
     await set_signal_result(session, signal, new_status, fixed_by_telegram_id=None)
+    if actor_username:
+        await log_web_admin_action(
+            session,
+            actor_username=actor_username,
+            action="signal_result_update",
+            target_type="signal",
+            target_id=signal_id,
+            details={"old_status": old_status, "new_status": new_status},
+        )
+        await session.commit()
     return True
 
 
-async def update_web_request_status(session, kind: str, request_id: int, new_status: str) -> bool:
+async def update_web_request_status(session, kind: str, request_id: int, new_status: str, *, actor_username: str | None = None) -> bool:
     if kind == "subscription":
         if new_status not in SUBSCRIPTION_WEB_STATUSES:
             raise ValueError("Unknown subscription status")
         request = await session.get(SubscriptionRequest, request_id)
         if request is None:
             return False
+        old_status = request.status
         request.status = new_status
         request.updated_at = datetime.utcnow()
         if new_status in {"paid", "done"}:
             user = await session.get(User, request.user_id)
             if user is not None:
                 await grant_subscription_access(session, user, request)
+        if actor_username:
+            await log_web_admin_action(
+                session,
+                actor_username=actor_username,
+                action="request_status_update",
+                target_type="subscription_request",
+                target_id=request_id,
+                details={"old_status": old_status, "new_status": new_status},
+            )
         await session.commit()
         return True
     if kind == "analysis":
@@ -293,17 +345,30 @@ async def update_web_request_status(session, kind: str, request_id: int, new_sta
         request = await session.get(MatchAnalysisRequest, request_id)
         if request is None:
             return False
+        old_status = request.status
         request.status = new_status
         request.updated_at = datetime.utcnow()
+        if actor_username:
+            await log_web_admin_action(
+                session,
+                actor_username=actor_username,
+                action="request_status_update",
+                target_type="analysis_request",
+                target_id=request_id,
+                details={"old_status": old_status, "new_status": new_status},
+            )
         await session.commit()
         return True
     raise ValueError("Unknown request kind")
 
 
-async def update_web_user_access(session, user_id: int, action: str, plan_id: str | None = None) -> bool:
+async def update_web_user_access(session, user_id: int, action: str, plan_id: str | None = None, *, actor_username: str | None = None) -> bool:
     user = await session.get(User, user_id)
     if user is None:
         return False
+
+    old_access = await collect_user_detail(session, user_id)
+    old_item = old_access.item if old_access is not None else None
 
     if action == "trial":
         await grant_trial_access(session, user)
@@ -320,6 +385,20 @@ async def update_web_user_access(session, user_id: int, action: str, plan_id: st
         raise ValueError("Unknown user access action")
 
     user.updated_at = datetime.utcnow()
+    if actor_username:
+        await log_web_admin_action(
+            session,
+            actor_username=actor_username,
+            action="user_access_update",
+            target_type="user",
+            target_id=user_id,
+            details={
+                "action": action,
+                "plan_id": plan_id,
+                "old_access_type": old_item.access_type if old_item is not None else None,
+                "old_access_status": old_item.access_status if old_item is not None else None,
+            },
+        )
     await session.commit()
     return True
 
@@ -359,6 +438,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Подписки", "/subscriptions"),
             ("Заявки", "/requests"),
             ("Настройки", "/settings"),
+            ("Журнал", "/audit"),
             ("Обслуживание", "/maintenance"),
         ]
     )
@@ -941,6 +1021,28 @@ def render_request_detail_html(detail: RequestDetail, *, token: str = "") -> str
     return _base_html(f"Заявка #{item.id}", body, token=token)
 
 
+def render_audit_html(logs: list[WebAdminActionLog], *, token: str = "") -> str:
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{_fmt_dt(log.created_at)}</td>
+          <td>{escape(log.actor_username)}</td>
+          <td>{escape(_label(log.action))}</td>
+          <td>{escape(_label(log.target_type))}</td>
+          <td>{escape(log.target_id or '-')}</td>
+          <td><code>{escape(str(log.details or {}))}</code></td>
+        </tr>
+        """
+        for log in logs
+    ) or '<tr><td colspan="6" class="muted">Записей пока нет.</td></tr>'
+    body = f"""
+    <section><h2>Журнал действий</h2>
+      <table><thead><tr><th>Время</th><th>Админ</th><th>Действие</th><th>Объект</th><th>ID</th><th>Детали</th></tr></thead><tbody>{rows}</tbody></table>
+    </section>
+    """
+    return _base_html("Журнал", body, token=token)
+
+
 def render_settings_html(analysis_config: PaymentConfig, subscription_config: PaymentConfig, *, token: str = "", message: str = "") -> str:
     message_html = f'<p class="pill">{escape(message)}</p>' if message else ""
     body = f"""
@@ -969,7 +1071,7 @@ def render_settings_html(analysis_config: PaymentConfig, subscription_config: Pa
     return _base_html("Настройки", body, token=token)
 
 
-async def update_web_payment_settings(session, section: str, payment_details: str, specialist_contact: str) -> None:
+async def update_web_payment_settings(session, section: str, payment_details: str, specialist_contact: str, *, actor_username: str | None = None) -> None:
     if section == "analysis":
         payment_key = ANALYSIS_PAYMENT_DETAILS_KEY
         contact_key = ANALYSIS_SPECIALIST_CONTACT_KEY
@@ -981,6 +1083,15 @@ async def update_web_payment_settings(session, section: str, payment_details: st
 
     await set_bot_setting(session, payment_key, payment_details, max_length=2000)
     await set_bot_setting(session, contact_key, specialist_contact, max_length=255)
+    if actor_username:
+        await log_web_admin_action(
+            session,
+            actor_username=actor_username,
+            action="settings_update",
+            target_type="settings",
+            target_id=section,
+            details={"section": section, "payment_key": payment_key, "contact_key": contact_key},
+        )
     await session.commit()
 
 
@@ -1011,6 +1122,17 @@ def render_maintenance_html(summary: MaintenanceSummary, *, token: str = "") -> 
     return _base_html("Обслуживание", body, token=token)
 
 
+@app.get("/audit", response_class=HTMLResponse)
+async def audit(_: Annotated[str, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    async with SessionFactory() as session:
+        logs = (
+            await session.scalars(
+                select(WebAdminActionLog).order_by(desc(WebAdminActionLog.id)).limit(200)
+            )
+        ).all()
+    return HTMLResponse(render_audit_html(list(logs), token=""))
+
+
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
     async with SessionFactory() as session:
@@ -1025,7 +1147,7 @@ async def settings_page(_: Annotated[None, Depends(require_web_admin)], request:
 async def settings_update(
     section: str,
     request: Request,
-    _: Annotated[None, Depends(require_web_admin)],
+    actor_username: Annotated[str, Depends(require_web_admin)],
 ) -> RedirectResponse:
     fields = await _read_form_fields(request)
     try:
@@ -1035,6 +1157,7 @@ async def settings_update(
                 section,
                 fields.get("payment_details", ""),
                 fields.get("specialist_contact", ""),
+                actor_username=actor_username,
             )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -1244,10 +1367,10 @@ async def maintenance(_: Annotated[None, Depends(require_web_admin)]) -> HTMLRes
 async def signal_result_update(
     signal_id: int,
     result_status: str,
-    _: Annotated[None, Depends(require_web_admin)],
+    actor_username: Annotated[str, Depends(require_web_admin)],
 ) -> RedirectResponse:
     async with SessionFactory() as session:
-        updated = await update_web_signal_result(session, signal_id, result_status)
+        updated = await update_web_signal_result(session, signal_id, result_status, actor_username=actor_username)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Signal not found")
     return RedirectResponse(url=f"/signals/{signal_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -1275,11 +1398,11 @@ async def user_detail(user_id: int, _: Annotated[None, Depends(require_web_admin
 async def user_access_plan_update(
     user_id: int,
     plan_id: str,
-    _: Annotated[None, Depends(require_web_admin)],
+    actor_username: Annotated[str, Depends(require_web_admin)],
 ) -> RedirectResponse:
     try:
         async with SessionFactory() as session:
-            updated = await update_web_user_access(session, user_id, "plan", plan_id=plan_id)
+            updated = await update_web_user_access(session, user_id, "plan", plan_id=plan_id, actor_username=actor_username)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not updated:
@@ -1291,11 +1414,11 @@ async def user_access_plan_update(
 async def user_access_update(
     user_id: int,
     action: str,
-    _: Annotated[None, Depends(require_web_admin)],
+    actor_username: Annotated[str, Depends(require_web_admin)],
 ) -> RedirectResponse:
     try:
         async with SessionFactory() as session:
-            updated = await update_web_user_access(session, user_id, action)
+            updated = await update_web_user_access(session, user_id, action, actor_username=actor_username)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not updated:
@@ -1317,11 +1440,11 @@ async def request_status_update(
     kind: str,
     request_id: int,
     new_status: str,
-    _: Annotated[None, Depends(require_web_admin)],
+    actor_username: Annotated[str, Depends(require_web_admin)],
 ) -> RedirectResponse:
     try:
         async with SessionFactory() as session:
-            updated = await update_web_request_status(session, kind, request_id, new_status)
+            updated = await update_web_request_status(session, kind, request_id, new_status, actor_username=actor_username)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not updated:

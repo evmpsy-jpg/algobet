@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fastapi import HTTPException
 from fastapi.security import HTTPBasicCredentials
 
-from app.database.models import Base, Match, MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess
+from app.database.models import Base, Match, MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess, WebAdminActionLog
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
@@ -28,6 +28,8 @@ from app.services.dashboard import (
 from app.services.bot_settings import PaymentConfig, get_analysis_payment_config, get_subscription_payment_config
 from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
+    log_web_admin_action,
+    render_audit_html,
     render_dashboard_html,
     render_deliveries_csv,
     render_deliveries_html,
@@ -464,6 +466,52 @@ def test_render_request_detail_html_shows_payment_and_contact() -> None:
     assert "Выполнена" in html
 
 
+def test_render_audit_html_shows_action_rows() -> None:
+    log = WebAdminActionLog(
+        actor_username="admin",
+        action="request_status_update",
+        target_type="subscription_request",
+        target_id="7",
+        details={"old_status": "new", "new_status": "done"},
+        created_at=datetime(2026, 7, 24, 11, 0),
+    )
+
+    html = render_audit_html([log])
+
+    assert "Журнал действий" in html
+    assert "admin" in html
+    assert "Изменение статуса заявки" in html
+    assert "Заявка на подписку" in html
+    assert "new" in html
+    assert "done" in html
+
+
+@pytest.mark.asyncio
+async def test_log_web_admin_action_creates_log_row() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        await log_web_admin_action(
+            session,
+            actor_username="manager",
+            action="settings_update",
+            target_type="settings",
+            target_id="analysis",
+            details={"section": "analysis"},
+        )
+        await session.commit()
+
+        log = await session.scalar(select(WebAdminActionLog))
+
+    await engine.dispose()
+
+    assert log is not None
+    assert log.actor_username == "manager"
+    assert log.action == "settings_update"
+    assert log.target_type == "settings"
+    assert log.target_id == "analysis"
+    assert log.details == {"section": "analysis"}
+
+
 def test_render_settings_html_shows_payment_forms() -> None:
     html = render_settings_html(
         PaymentConfig(payment_details="Карта <111>", specialist_contact="@analysis"),
@@ -483,14 +531,19 @@ def test_render_settings_html_shows_payment_forms() -> None:
 async def test_update_web_payment_settings_saves_subscription_values() -> None:
     engine, factory = await make_session()
     async with factory() as session:
-        await update_web_payment_settings(session, "subscription", "Карта 5555", "@manager")
+        await update_web_payment_settings(session, "subscription", "Карта 5555", "@manager", actor_username="admin")
 
         config = await get_subscription_payment_config(session)
+        log = await session.scalar(select(WebAdminActionLog).where(WebAdminActionLog.action == "settings_update"))
 
     await engine.dispose()
 
     assert config.payment_details == "Карта 5555"
     assert config.specialist_contact == "@manager"
+    assert log is not None
+    assert log.actor_username == "admin"
+    assert log.target_type == "settings"
+    assert log.target_id == "subscription"
 
 
 @pytest.mark.asyncio
@@ -533,8 +586,8 @@ def test_render_maintenance_html_shows_storage_and_backup_settings() -> None:
 def test_require_web_admin_accepts_basic_credentials_for_multiple_admins(monkeypatch) -> None:
     monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={"admin": "secret", "manager": "second"}))
 
-    require_web_admin(HTTPBasicCredentials(username="admin", password="secret"))
-    require_web_admin(HTTPBasicCredentials(username="manager", password="second"))
+    assert require_web_admin(HTTPBasicCredentials(username="admin", password="secret")) == "admin"
+    assert require_web_admin(HTTPBasicCredentials(username="manager", password="second")) == "manager"
 
 
 def test_require_web_admin_rejects_missing_or_wrong_credentials(monkeypatch) -> None:
@@ -590,10 +643,11 @@ async def test_update_web_subscription_status_grants_access() -> None:
         session.add(request)
         await session.commit()
 
-        updated = await update_web_request_status(session, "subscription", request.id, "done")
+        updated = await update_web_request_status(session, "subscription", request.id, "done", actor_username="admin")
 
         saved_request = await session.get(SubscriptionRequest, request.id)
         access = await session.scalar(select(UserAccess).where(UserAccess.user_id == user.id))
+        log = await session.scalar(select(WebAdminActionLog).where(WebAdminActionLog.action == "request_status_update"))
 
     await engine.dispose()
 
@@ -606,6 +660,11 @@ async def test_update_web_subscription_status_grants_access() -> None:
     assert access.plan_id == "vip_10"
     assert access.signals_remaining == 10
     assert access.includes_vip is True
+    assert log is not None
+    assert log.actor_username == "admin"
+    assert log.target_type == "subscription_request"
+    assert log.target_id == str(request.id)
+    assert log.details == {"old_status": "new", "new_status": "done"}
 
 
 @pytest.mark.asyncio
@@ -616,9 +675,10 @@ async def test_update_web_user_access_grants_selected_plan() -> None:
         session.add(user)
         await session.commit()
 
-        updated = await update_web_user_access(session, user.id, "plan", plan_id="included_48h")
+        updated = await update_web_user_access(session, user.id, "plan", plan_id="included_48h", actor_username="manager")
 
         access = await session.scalar(select(UserAccess).where(UserAccess.user_id == user.id))
+        log = await session.scalar(select(WebAdminActionLog).where(WebAdminActionLog.action == "user_access_update"))
 
     await engine.dispose()
 
@@ -633,6 +693,12 @@ async def test_update_web_user_access_grants_selected_plan() -> None:
     assert access.includes_all_signals is True
     assert access.includes_analytics is True
     assert access.active_until is not None
+    assert log is not None
+    assert log.actor_username == "manager"
+    assert log.target_type == "user"
+    assert log.target_id == str(user.id)
+    assert log.details["action"] == "plan"
+    assert log.details["plan_id"] == "included_48h"
 
 
 @pytest.mark.asyncio
@@ -716,8 +782,9 @@ async def test_update_web_signal_result_creates_and_updates_manual_result() -> N
 
         created = await update_web_signal_result(session, signal.id, "won")
         result = await session.scalar(select(SignalResult).where(SignalResult.signal_id == signal.id))
-        updated = await update_web_signal_result(session, signal.id, "lost")
+        updated = await update_web_signal_result(session, signal.id, "lost", actor_username="admin")
         saved_results = list((await session.execute(select(SignalResult))).scalars())
+        log = await session.scalar(select(WebAdminActionLog).where(WebAdminActionLog.action == "signal_result_update"))
         missing = await update_web_signal_result(session, 9999, "won")
 
     await engine.dispose()
@@ -729,4 +796,9 @@ async def test_update_web_signal_result_creates_and_updates_manual_result() -> N
     assert result.fixed_by_telegram_id is None
     assert updated is True
     assert len(saved_results) == 1
+    assert log is not None
+    assert log.actor_username == "admin"
+    assert log.target_type == "signal"
+    assert log.target_id == str(signal.id)
+    assert log.details == {"old_status": "won", "new_status": "lost"}
     assert missing is False
