@@ -155,13 +155,13 @@ SIGNAL_RESULT_FILTER_LABELS = {
 }
 
 
-def _signals_path(status_filter: str | None = None, result_filter: str | None = None) -> str:
+def _signals_path(status_filter: str | None = None, result_filter: str | None = None, *, base: str = "/signals") -> str:
     params = []
     if status_filter:
         params.append(f"status={status_filter}")
     if result_filter:
         params.append(f"result={result_filter}")
-    return "/signals" + ("?" + "&".join(params) if params else "")
+    return base + ("?" + "&".join(params) if params else "")
 
 
 def _signal_result_buttons(signal_id: int, current_status: str | None) -> str:
@@ -430,11 +430,31 @@ def render_signals_html(
     <section>
       <h2>Сигналы: {escape(_label(status_filter or 'all'))} · {escape(result_title)}</h2>
       <div class="filters">{status_filters}</div>
-      <div class="filters">{result_filters}</div>
+      <div class="filters">{result_filters}<a class="button" href="{_token_href(_signals_path(status_filter, result_filter, base='/signals/export.csv'), token)}">CSV</a></div>
       <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Матч</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{_signal_rows(signals, token=token)}</tbody></table>
     </section>
     """
     return _base_html("Сигналы", body, token=token)
+
+
+def render_signals_csv(signals: list[SignalListItem]) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id", "status", "send_at", "signal_group", "level", "side", "match", "result", "sent_deliveries", "failed_deliveries"])
+    for signal in signals:
+        writer.writerow([
+            signal.id,
+            signal.status,
+            _fmt_dt(signal.send_at),
+            signal.signal_group,
+            signal.level or "",
+            signal.side or "",
+            f"{signal.player_1} - {signal.player_2}",
+            signal.result_status or "",
+            signal.sent_deliveries,
+            signal.failed_deliveries,
+        ])
+    return output.getvalue()
 
 
 def _delivery_retry_action(delivery_id: int, delivery_status: str, status_filter: str | None = None) -> str:
@@ -732,6 +752,22 @@ async def signals(_: Annotated[None, Depends(require_web_admin)], request: Reque
     async with SessionFactory() as session:
         rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter)
     return HTMLResponse(render_signals_html(rows, token="", status_filter=status_filter, result_filter=result_filter))
+
+
+@app.get("/signals/export.csv")
+async def signals_export(_: Annotated[None, Depends(require_web_admin)], request: Request) -> Response:
+    status_filter = request.query_params.get("status") or None
+    result_filter = request.query_params.get("result") or None
+    if result_filter not in SIGNAL_RESULT_FILTER_LABELS:
+        result_filter = None
+    async with SessionFactory() as session:
+        rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter, limit=10000)
+    content = render_signals_csv(rows)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=algobet-signals.csv"},
+    )
 
 
 @app.get("/deliveries", response_class=HTMLResponse)

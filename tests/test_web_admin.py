@@ -35,6 +35,7 @@ from app.web_admin import (
     render_request_detail_html,
     render_requests_html,
     render_signal_detail_html,
+    render_signals_csv,
     render_signals_html,
     render_user_detail_html,
     render_users_html,
@@ -123,9 +124,17 @@ def test_render_signals_html_shows_filters_and_delivery_counts() -> None:
     assert "/signals?status=ready&result=won" in html
     assert "/signals?status=sent&result=lost" in html
     assert "/signals?status=sent&result=unrated" in html
+    assert "/signals/export.csv?status=sent&result=won" in html
     assert "Player &lt;One&gt;" in html
     assert "5 / 1" in html
     assert "/signals/11" in html
+
+
+def test_render_signals_csv_exports_rows() -> None:
+    csv_text = render_signals_csv([make_signal()])
+
+    assert csv_text.splitlines()[0] == "id,status,send_at,signal_group,level,side,match,result,sent_deliveries,failed_deliveries"
+    assert "11,sent,24.07.2026 11:40,vip,TOP,1,Player <One> - Player Two,won,5,1" in csv_text
 
 
 def test_render_deliveries_html_shows_filters_and_errors() -> None:
