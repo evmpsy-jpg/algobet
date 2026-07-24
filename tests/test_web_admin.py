@@ -25,6 +25,7 @@ from app.services.dashboard import (
     UserDetail,
     UserListItem,
 )
+from app.services.bot_settings import PaymentConfig, get_analysis_payment_config, get_subscription_payment_config
 from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
     render_dashboard_html,
@@ -35,12 +36,14 @@ from app.web_admin import (
     render_request_detail_html,
     render_requests_csv,
     render_requests_html,
+    render_settings_html,
     render_signal_detail_html,
     render_signals_csv,
     render_signals_html,
     render_user_detail_html,
     render_users_html,
     require_web_admin,
+    update_web_payment_settings,
     update_web_request_status,
     update_web_signal_result,
     update_web_user_access,
@@ -398,6 +401,49 @@ def test_render_request_detail_html_shows_payment_and_contact() -> None:
     assert "@spec" in html
     assert 'action="/requests/subscription/7/status/done"' in html
     assert "Выполнена" in html
+
+
+def test_render_settings_html_shows_payment_forms() -> None:
+    html = render_settings_html(
+        PaymentConfig(payment_details="Карта <111>", specialist_contact="@analysis"),
+        PaymentConfig(payment_details="СБП <222>", specialist_contact="@sub"),
+        message="Сохранено",
+    )
+
+    assert "Настройки" in html
+    assert "/settings/analysis" in html
+    assert "/settings/subscription" in html
+    assert "Карта &lt;111&gt;" in html
+    assert "СБП &lt;222&gt;" in html
+    assert "Сохранено" in html
+
+
+@pytest.mark.asyncio
+async def test_update_web_payment_settings_saves_subscription_values() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        await update_web_payment_settings(session, "subscription", "Карта 5555", "@manager")
+
+        config = await get_subscription_payment_config(session)
+
+    await engine.dispose()
+
+    assert config.payment_details == "Карта 5555"
+    assert config.specialist_contact == "@manager"
+
+
+@pytest.mark.asyncio
+async def test_update_web_payment_settings_saves_analysis_values() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        await update_web_payment_settings(session, "analysis", "Карта анализа", "@spec")
+
+        config = await get_analysis_payment_config(session)
+
+    await engine.dispose()
+
+    assert config.payment_details == "Карта анализа"
+    assert config.specialist_contact == "@spec"
 
 
 def test_render_maintenance_html_shows_storage_and_backup_settings() -> None:

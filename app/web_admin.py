@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hmac
+from urllib.parse import parse_qs
 from io import StringIO
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -17,6 +18,16 @@ from app.database.models import MatchAnalysisRequest, ScheduledSignal, Subscript
 from app.database.session import SessionFactory, init_db
 from app.services.access import disable_access, grant_subscription_access, grant_subscription_plan_access, grant_trial_access
 from app.services.signal_sender import process_delivery_now
+from app.services.bot_settings import (
+    ANALYSIS_PAYMENT_DETAILS_KEY,
+    ANALYSIS_SPECIALIST_CONTACT_KEY,
+    SUBSCRIPTION_PAYMENT_DETAILS_KEY,
+    SUBSCRIPTION_SPECIALIST_CONTACT_KEY,
+    PaymentConfig,
+    get_analysis_payment_config,
+    get_subscription_payment_config,
+    set_bot_setting,
+)
 from app.services.subscriptions import SUBSCRIPTION_PLANS, format_price, get_subscription_plan
 from app.services.signal_results import AutoResultSummary, auto_update_signal_results, format_winrate, set_signal_result
 from app.services.dashboard import (
@@ -327,6 +338,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Статистика", "/quality"),
             ("Пользователи", "/users"),
             ("Заявки", "/requests"),
+            ("Настройки", "/settings"),
             ("Обслуживание", "/maintenance"),
         ]
     )
@@ -370,6 +382,9 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     th, td {{ border-bottom:1px solid var(--line); padding:10px 8px; text-align:left; vertical-align:top; }}
     th {{ color:var(--muted); font-size:12px; text-transform:uppercase; }}
     .filters {{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }}
+    .settings-form {{ display:grid; gap:8px; max-width:760px; }}
+    .settings-form label {{ color:var(--muted); font-weight:700; font-size:13px; }}
+    .settings-form textarea, .settings-form input {{ width:100%; border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; color:var(--text); background:#fff; }}
     @media (max-width:900px) {{ .grid,.sections {{ grid-template-columns:1fr 1fr; }} }}
     @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections {{ grid-template-columns:1fr; }} table {{ font-size:13px; }} th.optional,td.optional {{ display:none; }} }}
   </style>
@@ -378,7 +393,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
   <header>
     <div>
       <h1>Админка Algobet</h1>
-      <div class="muted">Операционная панель без правки данных</div>
+      <div class="muted">Операционная панель</div>
       <nav>{nav}</nav>
     </div>
     <a class="button" href="{refresh_href}">Обновить</a>
@@ -830,6 +845,55 @@ def render_request_detail_html(detail: RequestDetail, *, token: str = "") -> str
     return _base_html(f"Заявка #{item.id}", body, token=token)
 
 
+def render_settings_html(analysis_config: PaymentConfig, subscription_config: PaymentConfig, *, token: str = "", message: str = "") -> str:
+    message_html = f'<p class="pill">{escape(message)}</p>' if message else ""
+    body = f"""
+    <section><h2>Настройки</h2>{message_html}
+      <p class="muted">Реквизиты и контакты используются в сообщениях пользователям после создания заявки.</p>
+    </section>
+    <section><h2>Анализ матча</h2>
+      <form method="post" action="/settings/analysis" class="settings-form">
+        <label>Реквизиты для оплаты</label>
+        <textarea name="payment_details" rows="6">{escape(analysis_config.payment_details)}</textarea>
+        <label>Контакт специалиста</label>
+        <input name="specialist_contact" value="{escape(analysis_config.specialist_contact)}">
+        <div class="actions"><button class="action-button" type="submit">Сохранить анализ</button></div>
+      </form>
+    </section>
+    <section><h2>Подписка</h2>
+      <form method="post" action="/settings/subscription" class="settings-form">
+        <label>Реквизиты для оплаты</label>
+        <textarea name="payment_details" rows="6">{escape(subscription_config.payment_details)}</textarea>
+        <label>Контакт специалиста</label>
+        <input name="specialist_contact" value="{escape(subscription_config.specialist_contact)}">
+        <div class="actions"><button class="action-button" type="submit">Сохранить подписку</button></div>
+      </form>
+    </section>
+    """
+    return _base_html("Настройки", body, token=token)
+
+
+async def update_web_payment_settings(session, section: str, payment_details: str, specialist_contact: str) -> None:
+    if section == "analysis":
+        payment_key = ANALYSIS_PAYMENT_DETAILS_KEY
+        contact_key = ANALYSIS_SPECIALIST_CONTACT_KEY
+    elif section == "subscription":
+        payment_key = SUBSCRIPTION_PAYMENT_DETAILS_KEY
+        contact_key = SUBSCRIPTION_SPECIALIST_CONTACT_KEY
+    else:
+        raise ValueError("Unknown settings section")
+
+    await set_bot_setting(session, payment_key, payment_details, max_length=2000)
+    await set_bot_setting(session, contact_key, specialist_contact, max_length=255)
+    await session.commit()
+
+
+async def _read_form_fields(request: Request) -> dict[str, str]:
+    body = (await request.body()).decode("utf-8", errors="replace")
+    values = parse_qs(body, keep_blank_values=True)
+    return {key: items[-1] if items else "" for key, items in values.items()}
+
+
 def render_maintenance_html(summary: MaintenanceSummary, *, token: str = "") -> str:
     enabled = _label("enabled" if summary.sqlite_backup_enabled else "disabled")
     body = f"""
@@ -849,6 +913,36 @@ def render_maintenance_html(summary: MaintenanceSummary, *, token: str = "") -> 
     </section>
     """
     return _base_html("Обслуживание", body, token=token)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    async with SessionFactory() as session:
+        analysis_config = await get_analysis_payment_config(session)
+        subscription_config = await get_subscription_payment_config(session)
+    message = request.query_params.get("saved") or ""
+    message_text = "Настройки сохранены." if message else ""
+    return HTMLResponse(render_settings_html(analysis_config, subscription_config, token="", message=message_text))
+
+
+@app.post("/settings/{section}")
+async def settings_update(
+    section: str,
+    request: Request,
+    _: Annotated[None, Depends(require_web_admin)],
+) -> RedirectResponse:
+    fields = await _read_form_fields(request)
+    try:
+        async with SessionFactory() as session:
+            await update_web_payment_settings(
+                session,
+                section,
+                fields.get("payment_details", ""),
+                fields.get("specialist_contact", ""),
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return RedirectResponse(url="/settings?saved=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/health")
