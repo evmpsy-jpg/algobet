@@ -9,6 +9,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sqlite_backup import latest_sqlite_backup, sqlite_database_path
+from app.services.signal_results import LEVEL_ORDER, ResultCounter, summarize_results
 from app.database.models import (
     ImportBatch,
     Match,
@@ -176,6 +177,30 @@ class RequestDetail:
     description: str
     updated_at: datetime
 
+
+@dataclass(frozen=True)
+class QualityStatsItem:
+    key: str
+    title: str
+    sent_total: int
+    counter: ResultCounter
+
+    @property
+    def evaluated(self) -> int:
+        return self.counter.total
+
+    @property
+    def unrated_sent(self) -> int:
+        return max(self.sent_total - self.evaluated, 0)
+
+
+@dataclass(frozen=True)
+class QualitySummary:
+    sent_total: int
+    overall: QualityStatsItem
+    by_group: list[QualityStatsItem] = field(default_factory=list)
+    by_level: list[QualityStatsItem] = field(default_factory=list)
+
 @dataclass(frozen=True)
 class DashboardSummary:
     users_total: int = 0
@@ -278,6 +303,91 @@ def collect_maintenance_summary(settings: Any) -> MaintenanceSummary:
         sqlite_backup_interval_hours=int(settings.sqlite_backup_interval_hours),
         sqlite_backup_keep=int(settings.sqlite_backup_keep),
     )
+
+
+def _payload_value(payload: dict[str, Any] | None, key: str, default: str = 'unknown') -> str:
+    if not isinstance(payload, dict):
+        return default
+    value = payload.get(key)
+    return str(value or default)
+
+
+def _group_title(key: str) -> str:
+    return {
+        'vip': 'VIP',
+        'all': 'ALL',
+        'unknown': '\u0411\u0435\u0437 \u0442\u0438\u043f\u0430',
+    }.get(key.lower(), key.upper())
+
+
+def _make_quality_item(key: str, title: str, sent_total: int, rows: list[tuple[dict[str, Any] | None, str | None]]) -> QualityStatsItem:
+    return QualityStatsItem(
+        key=key,
+        title=title,
+        sent_total=sent_total,
+        counter=summarize_results(rows, total_sent=sent_total).overall if rows else ResultCounter(),
+    )
+
+
+async def collect_quality_summary(session: AsyncSession) -> QualitySummary:
+    sent_payload_rows = (
+        await session.execute(
+            select(ScheduledSignal.signal_payload).where(ScheduledSignal.status == 'sent')
+        )
+    ).all()
+    sent_payloads = [payload for (payload,) in sent_payload_rows]
+
+    result_rows = list((
+        await session.execute(
+            select(ScheduledSignal.signal_payload, SignalResult.status)
+            .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.status == 'sent')
+        )
+    ).all())
+
+    sent_total = len(sent_payloads)
+    overall_summary = summarize_results(result_rows, total_sent=sent_total)
+    overall = QualityStatsItem(
+        key='overall',
+        title='\u0412\u0441\u0435\u0433\u043e',
+        sent_total=sent_total,
+        counter=overall_summary.overall,
+    )
+
+    sent_groups: dict[str, int] = {}
+    result_groups: dict[str, list[tuple[dict[str, Any] | None, str | None]]] = {}
+    for payload in sent_payloads:
+        group = _payload_value(payload, 'signal_group').lower()
+        sent_groups[group] = sent_groups.get(group, 0) + 1
+    for payload, result_status in result_rows:
+        group = _payload_value(payload, 'signal_group').lower()
+        result_groups.setdefault(group, []).append((payload, result_status))
+
+    group_order = ['vip', 'all'] + sorted(key for key in set(sent_groups) | set(result_groups) if key not in {'vip', 'all'})
+    by_group = [
+        _make_quality_item(key, _group_title(key), sent_groups.get(key, 0), result_groups.get(key, []))
+        for key in group_order
+        if sent_groups.get(key, 0) or result_groups.get(key)
+    ]
+
+    sent_levels: dict[str, int] = {}
+    result_levels: dict[str, list[tuple[dict[str, Any] | None, str | None]]] = {}
+    for payload in sent_payloads:
+        level = _payload_value(payload, 'level', '-')
+        sent_levels[level] = sent_levels.get(level, 0) + 1
+    for payload, result_status in result_rows:
+        level = _payload_value(payload, 'level', '-')
+        result_levels.setdefault(level, []).append((payload, result_status))
+
+    known_levels = set(sent_levels) | set(result_levels)
+    level_order = [level for level in LEVEL_ORDER if level in known_levels]
+    level_order.extend(sorted(level for level in known_levels if level not in set(LEVEL_ORDER)))
+    by_level = [
+        _make_quality_item(level, level, sent_levels.get(level, 0), result_levels.get(level, []))
+        for level in level_order
+    ]
+
+    return QualitySummary(sent_total=sent_total, overall=overall, by_group=by_group, by_level=by_level)
 
 
 async def collect_dashboard_summary(session: AsyncSession, *, recent_limit: int = 8) -> DashboardSummary:

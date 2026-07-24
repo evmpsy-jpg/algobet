@@ -18,7 +18,7 @@ from app.database.models import (
     User,
     UserAccess,
 )
-from app.services.dashboard import collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
+from app.services.dashboard import collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
 
 
 @pytest.mark.asyncio
@@ -196,6 +196,87 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert subscription_detail.item.kind == "subscription"
     assert analysis_detail is not None
     assert analysis_detail.item.kind == "analysis"
+
+
+@pytest.mark.asyncio
+async def test_collect_quality_summary_groups_sent_signal_results() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        matches = []
+        for offset in range(4):
+            match = Match(
+                external_match_id=601 + offset,
+                external_tournament_id=9001,
+                source_url=f"https://example.test/9001/{601 + offset}",
+                tournament_date="24.07.2026",
+                match_time="12:30",
+                match_start_at=datetime(2026, 7, 24, 12, 30),
+                player_1=f"Player {offset + 1}",
+                player_2=f"Opponent {offset + 1}",
+                raw_data={},
+                is_present_in_latest_import=True,
+            )
+            matches.append(match)
+        session.add_all(matches)
+        await session.flush()
+
+        vip_signal = ScheduledSignal(
+            match_id=matches[0].id,
+            status="sent",
+            send_at=datetime(2026, 7, 24, 12, 10),
+            signal_type="SET_VIP_TOP",
+            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1},
+            message_text="vip signal",
+        )
+        all_lost_signal = ScheduledSignal(
+            match_id=matches[1].id,
+            status="sent",
+            send_at=datetime(2026, 7, 24, 12, 11),
+            signal_type="SET_ALL_STANDARD",
+            signal_payload={"signal_group": "all", "level": "STANDARD", "side": 2},
+            message_text="all signal",
+        )
+        all_unrated_signal = ScheduledSignal(
+            match_id=matches[2].id,
+            status="sent",
+            send_at=datetime(2026, 7, 24, 12, 12),
+            signal_type="SET_ALL_TOP",
+            signal_payload={"signal_group": "all", "level": "TOP", "side": 1},
+            message_text="all unrated",
+        )
+        scheduled_signal = ScheduledSignal(
+            match_id=matches[3].id,
+            status="ready",
+            send_at=datetime(2026, 7, 24, 12, 13),
+            signal_type="SET_VIP_TOP",
+            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1},
+            message_text="not sent",
+        )
+        session.add_all([vip_signal, all_lost_signal, all_unrated_signal, scheduled_signal])
+        await session.flush()
+        session.add_all([
+            SignalResult(signal_id=vip_signal.id, status="won", source="auto"),
+            SignalResult(signal_id=all_lost_signal.id, status="lost", source="manual"),
+            SignalResult(signal_id=scheduled_signal.id, status="won", source="auto"),
+        ])
+        await session.commit()
+
+        summary = await collect_quality_summary(session)
+
+    await engine.dispose()
+
+    assert summary.sent_total == 3
+    assert summary.overall.evaluated == 2
+    assert summary.overall.unrated_sent == 1
+    assert summary.overall.counter.winrate == 50.0
+    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_group] == [("vip", 1, 1), ("all", 2, 1)]
+    assert summary.by_group[0].counter.won == 1
+    assert summary.by_group[1].counter.lost == 1
+    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_level] == [("TOP", 2, 1), ("STANDARD", 1, 1)]
 
 
 @pytest.mark.asyncio

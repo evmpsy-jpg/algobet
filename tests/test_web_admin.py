@@ -13,6 +13,8 @@ from app.database.models import Base, MatchAnalysisRequest, SubscriptionRequest,
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
+    QualityStatsItem,
+    QualitySummary,
     LatestImportSummary,
     RecentSignalSummary,
     DeliveryListItem,
@@ -23,11 +25,13 @@ from app.services.dashboard import (
     UserDetail,
     UserListItem,
 )
+from app.services.signal_results import ResultCounter
 from app.web_admin import (
     render_dashboard_html,
     render_deliveries_csv,
     render_deliveries_html,
     render_maintenance_html,
+    render_quality_html,
     render_request_detail_html,
     render_requests_html,
     render_signal_detail_html,
@@ -168,6 +172,51 @@ def test_render_deliveries_csv_exports_rows() -> None:
 
     assert csv_text.splitlines()[0] == "id,signal_id,status,telegram_id,username,signal_group,match,time,error"
     assert "5,11,failed,315715137,admin,vip,Player One - Player Two,24.07.2026 11:45,telegram unavailable" in csv_text
+
+
+def test_render_quality_html_shows_signal_result_statistics() -> None:
+    summary = QualitySummary(
+        sent_total=3,
+        overall=QualityStatsItem(
+            key="overall",
+            title="Всего",
+            sent_total=3,
+            counter=ResultCounter(won=1, lost=1),
+        ),
+        by_group=[
+            QualityStatsItem(
+                key="vip",
+                title="VIP",
+                sent_total=1,
+                counter=ResultCounter(won=1),
+            ),
+            QualityStatsItem(
+                key="all",
+                title="ALL",
+                sent_total=2,
+                counter=ResultCounter(lost=1),
+            ),
+        ],
+        by_level=[
+            QualityStatsItem(
+                key="TOP",
+                title="TOP",
+                sent_total=2,
+                counter=ResultCounter(won=1),
+            )
+        ],
+    )
+
+    html = render_quality_html(summary, token="secret")
+
+    assert "Статистика качества" in html
+    assert "Отправлено" in html
+    assert "Без результата" in html
+    assert "50.0%" in html
+    assert "VIP" in html
+    assert "ALL" in html
+    assert "TOP" in html
+    assert "/quality" in html
 
 
 def test_render_users_html_shows_access_and_delivery_counts() -> None:

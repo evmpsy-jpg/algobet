@@ -17,9 +17,12 @@ from app.database.models import MatchAnalysisRequest, SubscriptionRequest, User
 from app.database.session import SessionFactory, init_db
 from app.services.access import grant_subscription_access
 from app.services.signal_sender import process_delivery_now
+from app.services.signal_results import format_winrate
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
+    QualityStatsItem,
+    QualitySummary,
     RequestDetail,
     RequestListItem,
     SignalDetail,
@@ -29,6 +32,7 @@ from app.services.dashboard import (
     collect_dashboard_summary,
     collect_delivery_list,
     collect_maintenance_summary,
+    collect_quality_summary,
     collect_request_detail,
     collect_request_list,
     collect_signal_detail,
@@ -214,6 +218,8 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
         for label, path in [
             ("Сводка", "/"),
             ("Сигналы", "/signals"),
+            ("Доставки", "/deliveries"),
+            ("Статистика", "/quality"),
             ("Пользователи", "/users"),
             ("Заявки", "/requests"),
             ("Обслуживание", "/maintenance"),
@@ -438,6 +444,51 @@ def render_deliveries_html(deliveries, *, token: str = "", status_filter: str | 
     return _base_html("Доставки", body, token=token)
 
 
+def _quality_rows(items: list[QualityStatsItem]) -> str:
+    return "".join(
+        f"""
+        <tr>
+          <td>{escape(item.title)}</td>
+          <td>{item.sent_total}</td>
+          <td>{item.evaluated}</td>
+          <td>{item.unrated_sent}</td>
+          <td>{item.counter.won}</td>
+          <td>{item.counter.lost}</td>
+          <td>{item.counter.void}</td>
+          <td>{item.counter.unknown}</td>
+          <td>{format_winrate(item.counter.winrate)}</td>
+        </tr>
+        """
+        for item in items
+    ) or '<tr><td colspan="9" class="muted">Данных пока нет.</td></tr>'
+
+
+def _quality_table(title: str, items: list[QualityStatsItem]) -> str:
+    rows = _quality_rows(items)
+    return f"""
+    <section><h2>{escape(title)}</h2>
+      <table><thead><tr><th>Срез</th><th>Отправлено</th><th>Оценено</th><th>Без результата</th><th>Зашло</th><th>Не зашло</th><th>Возврат</th><th>Неизвестно</th><th>Winrate</th></tr></thead><tbody>{rows}</tbody></table>
+    </section>
+    """
+
+
+def render_quality_html(summary: QualitySummary, *, token: str = "") -> str:
+    overall = summary.overall
+    body = f"""
+    <section><h2>Статистика качества</h2>
+      <div class="stats">
+        <div class="metric"><span>Отправлено</span><strong>{overall.sent_total}</strong></div>
+        <div class="metric"><span>Оценено</span><strong>{overall.evaluated}</strong></div>
+        <div class="metric"><span>Без результата</span><strong>{overall.unrated_sent}</strong></div>
+        <div class="metric"><span>Winrate</span><strong>{format_winrate(overall.counter.winrate)}</strong></div>
+      </div>
+    </section>
+    {_quality_table('По группам', summary.by_group)}
+    {_quality_table('По уровням', summary.by_level)}
+    """
+    return _base_html("Статистика", body, token=token)
+
+
 def render_users_html(users: list[UserListItem], *, token: str = "") -> str:
     rows = "".join(
         f"""
@@ -655,6 +706,13 @@ async def delivery_retry(
     status_filter = request.query_params.get("status")
     suffix = f"?status={status_filter}" if status_filter else ""
     return RedirectResponse(url=f"/deliveries{suffix}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/quality", response_class=HTMLResponse)
+async def quality(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    async with SessionFactory() as session:
+        summary = await collect_quality_summary(session)
+    return HTMLResponse(render_quality_html(summary, token=""))
 
 
 @app.get("/users", response_class=HTMLResponse)
