@@ -136,6 +136,8 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
 
         summary = await collect_dashboard_summary(session)
         signals = await collect_signal_list(session)
+        won_signals = await collect_signal_list(session, result_filter="won")
+        unrated_signals = await collect_signal_list(session, result_filter="unrated")
         users = await collect_user_list(session)
         requests = await collect_request_list(session)
         deliveries = await collect_delivery_list(session)
@@ -171,6 +173,9 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert len(signals) == 1
     assert signals[0].sent_deliveries == 1
     assert signals[0].failed_deliveries == 1
+    assert len(won_signals) == 1
+    assert won_signals[0].result_status == "won"
+    assert unrated_signals == []
     assert len(deliveries) == 2
     assert deliveries[0].status == "failed"
     assert deliveries[0].error_text == "telegram unavailable"

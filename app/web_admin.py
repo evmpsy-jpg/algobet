@@ -147,6 +147,23 @@ ANALYSIS_WEB_STATUSES = ("new", "in_progress", "done", "cancelled")
 SIGNAL_RESULT_WEB_STATUSES = ("won", "lost", "void", "unknown")
 
 
+SIGNAL_RESULT_FILTER_LABELS = {
+    "unrated": "Без результата",
+    "won": "Зашли",
+    "lost": "Не зашли",
+    "void": "Возврат",
+}
+
+
+def _signals_path(status_filter: str | None = None, result_filter: str | None = None) -> str:
+    params = []
+    if status_filter:
+        params.append(f"status={status_filter}")
+    if result_filter:
+        params.append(f"result={result_filter}")
+    return "/signals" + ("?" + "&".join(params) if params else "")
+
+
 def _signal_result_buttons(signal_id: int, current_status: str | None) -> str:
     buttons = []
     for next_status in SIGNAL_RESULT_WEB_STATUSES:
@@ -381,37 +398,53 @@ def render_dashboard_html(summary: DashboardSummary, *, token: str = "") -> str:
     return _base_html("Сводка", body, token=token)
 
 
-def render_signals_html(signals: list[SignalListItem], *, token: str = "", status_filter: str | None = None) -> str:
-    filters = "".join(
-        f'<a class="button" href="{_token_href(path, token)}">{label}</a>'
-        for label, path in [
-            ("Все", "/signals"),
-            ("Запланированные", "/signals?status=scheduled"),
-            ("Готовые", "/signals?status=ready"),
-            ("Отправленные", "/signals?status=sent"),
-            ("Отмененные", "/signals?status=cancelled"),
+def render_signals_html(
+    signals: list[SignalListItem],
+    *,
+    token: str = "",
+    status_filter: str | None = None,
+    result_filter: str | None = None,
+) -> str:
+    status_filters = "".join(
+        f'<a class="button" href="{_token_href(_signals_path(status, result_filter), token)}">{label}</a>'
+        for label, status in [
+            ("Все", None),
+            ("Запланировано", "scheduled"),
+            ("Готово", "ready"),
+            ("Отправлено", "sent"),
+            ("Отменено", "cancelled"),
         ]
     )
+    result_filters = "".join(
+        f'<a class="button" href="{_token_href(_signals_path(status_filter, result), token)}">{label}</a>'
+        for label, result in [
+            ("Все результаты", None),
+            ("Без результата", "unrated"),
+            ("Зашли", "won"),
+            ("Не зашли", "lost"),
+            ("Возврат", "void"),
+        ]
+    )
+    result_title = SIGNAL_RESULT_FILTER_LABELS.get(result_filter or "", "Все результаты")
     body = f"""
     <section>
-      <h2>Сигналы: {escape(_label(status_filter or 'all'))}</h2>
-      <div class="filters">{filters}<a class="button" href="{_token_href('/deliveries/export.csv' + ('?status=' + status_filter if status_filter else ''), token)}">CSV</a></div>
-      <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Матч</th><th>Результат</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{_signal_rows(signals, token=token)}</tbody></table>
+      <h2>Сигналы: {escape(_label(status_filter or 'all'))} · {escape(result_title)}</h2>
+      <div class="filters">{status_filters}</div>
+      <div class="filters">{result_filters}</div>
+      <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Матч</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{_signal_rows(signals, token=token)}</tbody></table>
     </section>
     """
     return _base_html("Сигналы", body, token=token)
 
 
-def _delivery_retry_action(delivery_id: int, current_status: str, status_filter: str | None) -> str:
-    if current_status == "sent":
-        return "-"
-    target = f"/deliveries/{delivery_id}/retry"
-    if status_filter:
-        target += f"?status={escape(status_filter)}"
+def _delivery_retry_action(delivery_id: int, delivery_status: str, status_filter: str | None = None) -> str:
+    if delivery_status == "sent":
+        return '<span class="muted">-</span>'
+    suffix = f"?status={status_filter}" if status_filter else ""
     return (
-        f'<form method="post" action="{target}">'
+        f'<form method="post" action="/deliveries/{delivery_id}/retry{suffix}">'
         '<button class="action-button" type="submit">Повторить</button>'
-        '</form>'
+        "</form>"
     )
 
 
@@ -460,7 +493,7 @@ def render_deliveries_html(deliveries, *, token: str = "", status_filter: str | 
         </tr>
         """
         for delivery in deliveries
-    ) or '<tr><td colspan="9" class="muted">Доставок пока нет.</td></tr>'
+    ) or '<tr><td colspan="10" class="muted">Доставок пока нет.</td></tr>'
     body = f"""
     <section>
       <h2>Доставки: {escape(_label(status_filter or 'all'))}</h2>
@@ -693,9 +726,12 @@ async def dashboard(_: Annotated[None, Depends(require_web_admin)], request: Req
 @app.get("/signals", response_class=HTMLResponse)
 async def signals(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
     status_filter = request.query_params.get("status") or None
+    result_filter = request.query_params.get("result") or None
+    if result_filter not in SIGNAL_RESULT_FILTER_LABELS:
+        result_filter = None
     async with SessionFactory() as session:
-        rows = await collect_signal_list(session, status_filter=status_filter)
-    return HTMLResponse(render_signals_html(rows, token="", status_filter=status_filter))
+        rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter)
+    return HTMLResponse(render_signals_html(rows, token="", status_filter=status_filter, result_filter=result_filter))
 
 
 @app.get("/deliveries", response_class=HTMLResponse)

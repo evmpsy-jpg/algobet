@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sqlite_backup import latest_sqlite_backup, sqlite_database_path
@@ -467,6 +467,7 @@ async def collect_signal_list(
     session: AsyncSession,
     *,
     status_filter: str | None = None,
+    result_filter: str | None = None,
     limit: int = 50,
 ) -> list[SignalListItem]:
     query = (
@@ -478,6 +479,10 @@ async def collect_signal_list(
     )
     if status_filter:
         query = query.where(ScheduledSignal.status == status_filter)
+    if result_filter == "unrated":
+        query = query.where(or_(SignalResult.id.is_(None), SignalResult.status == "unknown"))
+    elif result_filter:
+        query = query.where(SignalResult.status == result_filter)
     rows = (await session.execute(query)).all()
     signal_ids = [signal.id for signal, _, _ in rows]
     delivery_counts = await _delivery_counts_by_signal(session, signal_ids)

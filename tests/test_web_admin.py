@@ -116,10 +116,13 @@ def test_render_dashboard_html_shows_core_metrics_and_navigation() -> None:
 
 
 def test_render_signals_html_shows_filters_and_delivery_counts() -> None:
-    html = render_signals_html([make_signal()], token="secret", status_filter="sent")
+    html = render_signals_html([make_signal()], token="secret", status_filter="sent", result_filter="won")
 
     assert "Сигналы: Отправлен" in html
-    assert "/signals?status=ready" in html
+    assert "Зашли" in html
+    assert "/signals?status=ready&result=won" in html
+    assert "/signals?status=sent&result=lost" in html
+    assert "/signals?status=sent&result=unrated" in html
     assert "Player &lt;One&gt;" in html
     assert "5 / 1" in html
     assert "/signals/11" in html
