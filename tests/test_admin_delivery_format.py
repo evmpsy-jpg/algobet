@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, Match, ScheduledSignal, SignalDelivery, SignalResult, User
-from app.handlers.admin import directory_size_bytes, format_bytes, format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines
+from app.handlers.admin import admin_settings_keyboard, directory_size_bytes, format_bytes, format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines
 
 
 def make_match() -> Match:
@@ -204,6 +204,14 @@ def test_signals_dashboard_keyboard_has_cancelled_button() -> None:
 
     assert "sig:list:cancelled:0" in callbacks
     assert any("4" in text for text in texts if text)
+
+
+def test_admin_settings_keyboard_has_backup_button() -> None:
+    markup = admin_settings_keyboard()
+
+    callbacks = [row[0].callback_data for row in markup.inline_keyboard]
+
+    assert "admset:backup" in callbacks
 
 
 def test_storage_usage_helpers_format_sizes_and_sqlite_path(tmp_path) -> None:

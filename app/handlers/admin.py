@@ -33,6 +33,7 @@ from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
 from app.services.signal_results import LEVEL_ORDER, auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, summarize_results
+from app.services.sqlite_backup import create_sqlite_backup, latest_sqlite_backup, sqlite_database_path
 from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price, format_subscription_activation_user_text
 
 router = Router(name="admin")
@@ -114,23 +115,22 @@ def format_bytes(value: int) -> str:
         amount /= 1024
 
 
-def sqlite_database_path(database_url: str) -> Path | None:
-    prefix = "sqlite+aiosqlite:///"
-    if not database_url.startswith(prefix):
-        return None
-    raw_path = database_url[len(prefix):]
-    return Path(raw_path)
-
-
 def storage_usage_lines(settings) -> list[str]:
     db_path = sqlite_database_path(settings.database_url)
     db_size = directory_size_bytes(db_path) if db_path is not None else 0
     db_text = format_bytes(db_size) if db_path is not None else "\u0432\u043d\u0435\u0448\u043d\u044f\u044f \u0411\u0414"
+    backup = latest_sqlite_backup(settings.data_dir)
+    backup_text = (
+        f"{backup.created_at:%d.%m.%Y %H:%M} - {format_bytes(backup.size_bytes)}"
+        if backup is not None
+        else "\u043d\u0435\u0442"
+    )
     return [
         "\u0414\u0438\u0441\u043a:",
         f"data: {format_bytes(directory_size_bytes(settings.data_dir))}",
         f"uploads: {format_bytes(directory_size_bytes(settings.uploads_dir))}",
         f"SQLite: {db_text}",
+        f"Backup SQLite: {backup_text}",
     ]
 
 
@@ -1929,6 +1929,7 @@ def admin_settings_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👤 Изменить контакт анализа", callback_data="admset:analysis_contact")],
         [InlineKeyboardButton(text="💳 Изменить реквизиты подписки", callback_data="admset:subscription_payment")],
         [InlineKeyboardButton(text="👤 Изменить контакт подписки", callback_data="admset:subscription_contact")],
+        [InlineKeyboardButton(text="💾 Сделать backup SQLite", callback_data="admset:backup")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="admset:refresh")],
     ])
 
@@ -1995,6 +1996,24 @@ async def settings_info(message: Message) -> None:
 async def admin_settings_refresh_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id):
         return
+    await show_admin_settings(callback)
+
+
+@router.callback_query(F.data == "admset:backup")
+async def admin_settings_backup_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    settings = get_settings()
+    try:
+        result = create_sqlite_backup(settings.database_url, settings.data_dir)
+    except (FileNotFoundError, ValueError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+
+    await callback.answer(
+        f"Backup \u0441\u043e\u0437\u0434\u0430\u043d: {result.created.path.name} ({format_bytes(result.created.size_bytes)})",
+        show_alert=True,
+    )
     await show_admin_settings(callback)
 
 
