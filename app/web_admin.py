@@ -13,11 +13,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from aiogram import Bot
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from app.database.models import MatchAnalysisRequest, SubscriptionRequest, User
+from app.database.models import MatchAnalysisRequest, ScheduledSignal, SubscriptionRequest, User
 from app.database.session import SessionFactory, init_db
 from app.services.access import grant_subscription_access
 from app.services.signal_sender import process_delivery_now
-from app.services.signal_results import format_winrate
+from app.services.signal_results import format_winrate, set_signal_result
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
@@ -144,6 +144,23 @@ SUBSCRIPTION_WEB_STATUSES = ("new", "paid", "done", "cancelled")
 ANALYSIS_WEB_STATUSES = ("new", "in_progress", "done", "cancelled")
 
 
+SIGNAL_RESULT_WEB_STATUSES = ("won", "lost", "void", "unknown")
+
+
+def _signal_result_buttons(signal_id: int, current_status: str | None) -> str:
+    buttons = []
+    for next_status in SIGNAL_RESULT_WEB_STATUSES:
+        classes = "action-button"
+        if next_status == current_status:
+            classes += " current"
+        buttons.append(
+            f'<form method="post" action="/signals/{signal_id}/result/{escape(next_status)}">'
+            f'<button class="{classes}" type="submit">{escape(_label(next_status))}</button>'
+            "</form>"
+        )
+    return "".join(buttons)
+
+
 def _request_status_buttons(kind: str, request_id: int, current_status: str) -> str:
     statuses = SUBSCRIPTION_WEB_STATUSES if kind == "subscription" else ANALYSIS_WEB_STATUSES if kind == "analysis" else ()
     buttons = []
@@ -159,6 +176,16 @@ def _request_status_buttons(kind: str, request_id: int, current_status: str) -> 
             "</form>"
         )
     return "".join(buttons)
+
+
+async def update_web_signal_result(session, signal_id: int, new_status: str) -> bool:
+    if new_status not in SIGNAL_RESULT_WEB_STATUSES:
+        raise ValueError("Unknown signal result status")
+    signal = await session.get(ScheduledSignal, signal_id)
+    if signal is None:
+        return False
+    await set_signal_result(session, signal, new_status, fixed_by_telegram_id=None)
+    return True
 
 
 async def update_web_request_status(session, kind: str, request_id: int, new_status: str) -> bool:
@@ -542,6 +569,7 @@ def render_requests_html(requests: list[RequestListItem], *, token: str = "") ->
 
 
 def render_signal_detail_html(detail: SignalDetail, *, token: str = "") -> str:
+    result_actions = _signal_result_buttons(detail.item.id, detail.item.result_status)
     delivery_rows = "".join(
         f"""
         <tr><td>#{delivery.id}</td><td>{escape(_label(delivery.status))}</td><td>{delivery.telegram_id}</td><td>{escape('@' + delivery.username if delivery.username else '-')}</td><td>{_fmt_dt(delivery.sent_at)}</td><td>{escape(delivery.error_text or '-')}</td></tr>
@@ -566,6 +594,7 @@ def render_signal_detail_html(detail: SignalDetail, *, token: str = "") -> str:
         <dt>Причина отмены</dt><dd>{escape(detail.cancel_reason or '-')}</dd>
         <dt>Решение</dt><dd>{escape(detail.decision_reason or '-')}</dd>
       </dl>
+      <div class="actions">{result_actions}</div>
     </section>
     <section><h2>Текст сигнала</h2><pre>{escape(detail.message_text or '')}</pre></section>
     <section><h2>Доставки</h2><table><thead><tr><th>ID</th><th>Статус</th><th>Telegram</th><th>Пользователь</th><th>Отправлено</th><th>Ошибка</th></tr></thead><tbody>{delivery_rows}</tbody></table></section>
@@ -733,6 +762,19 @@ async def requests(_: Annotated[None, Depends(require_web_admin)], request: Requ
 async def maintenance(_: Annotated[None, Depends(require_web_admin)]) -> HTMLResponse:
     summary = collect_maintenance_summary(get_settings())
     return HTMLResponse(render_maintenance_html(summary))
+
+
+@app.post("/signals/{signal_id}/result/{result_status}")
+async def signal_result_update(
+    signal_id: int,
+    result_status: str,
+    _: Annotated[None, Depends(require_web_admin)],
+) -> RedirectResponse:
+    async with SessionFactory() as session:
+        updated = await update_web_signal_result(session, signal_id, result_status)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Signal not found")
+    return RedirectResponse(url=f"/signals/{signal_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/signals/{signal_id}", response_class=HTMLResponse)

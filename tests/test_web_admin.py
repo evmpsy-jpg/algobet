@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fastapi import HTTPException
 from fastapi.security import HTTPBasicCredentials
 
-from app.database.models import Base, MatchAnalysisRequest, SubscriptionRequest, User, UserAccess
+from app.database.models import Base, Match, MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
@@ -40,6 +40,7 @@ from app.web_admin import (
     render_users_html,
     require_web_admin,
     update_web_request_status,
+    update_web_signal_result,
 )
 
 
@@ -292,6 +293,11 @@ def test_render_signal_detail_html_shows_message_deliveries_and_trace() -> None:
     assert "Signal &lt;message&gt;" in html
     assert "Accepted &lt;rule&gt;" in html
     assert "P1_BASE" in html
+    assert 'action="/signals/11/result/won"' in html
+    assert 'action="/signals/11/result/lost"' in html
+    assert 'action="/signals/11/result/void"' in html
+    assert 'action="/signals/11/result/unknown"' in html
+    assert "current" in html
 
 
 def test_render_user_detail_html_shows_related_deliveries_and_requests() -> None:
@@ -464,3 +470,49 @@ async def test_update_web_analysis_status_changes_request_only() -> None:
     assert updated is True
     assert saved_request is not None
     assert saved_request.status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_update_web_signal_result_creates_and_updates_manual_result() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        match = Match(
+            external_match_id=701,
+            external_tournament_id=9001,
+            source_url="https://example.test/9001/701",
+            tournament_date="24.07.2026",
+            match_time="12:30",
+            match_start_at=datetime(2026, 7, 24, 12, 30),
+            player_1="Player A",
+            player_2="Player B",
+            raw_data={},
+        )
+        session.add(match)
+        await session.flush()
+        signal = ScheduledSignal(
+            match_id=match.id,
+            status="sent",
+            send_at=datetime(2026, 7, 24, 12, 10),
+            signal_type="SET_VIP_TOP",
+            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1},
+            message_text="signal",
+        )
+        session.add(signal)
+        await session.commit()
+
+        created = await update_web_signal_result(session, signal.id, "won")
+        result = await session.scalar(select(SignalResult).where(SignalResult.signal_id == signal.id))
+        updated = await update_web_signal_result(session, signal.id, "lost")
+        saved_results = list((await session.execute(select(SignalResult))).scalars())
+        missing = await update_web_signal_result(session, 9999, "won")
+
+    await engine.dispose()
+
+    assert created is True
+    assert result is not None
+    assert result.status == "lost"
+    assert result.source == "manual"
+    assert result.fixed_by_telegram_id is None
+    assert updated is True
+    assert len(saved_results) == 1
+    assert missing is False
