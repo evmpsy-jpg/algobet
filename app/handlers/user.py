@@ -126,7 +126,7 @@ def format_public_results(
         f"✅ Зашло: {summary.overall.won}",
         f"❌ Не зашло: {summary.overall.lost}",
         f"↩️ Возврат: {summary.overall.void}",
-        f"Winrate: {format_winrate(summary.overall.winrate)}",
+        f"Процент захода: {format_winrate(summary.overall.winrate)}",
         "",
         "Последние результаты:",
     ]

@@ -1192,7 +1192,7 @@ async def admin_statistics(message: Message) -> None:
         f"❔ Неизвестно: {result_summary.overall.unknown}\n"
         f"Оценено: {result_summary.evaluated} из {result_summary.total_sent}\n"
         f"Без результата: {result_summary.unrated_sent}\n"
-        f"Winrate: {format_winrate(result_summary.overall.winrate)}\n\n"
+        f"Процент захода: {format_winrate(result_summary.overall.winrate)}\n\n"
         f"По уровням:\n{level_text}\n\n"
         f"Следующий сигнал: {next_text}"
     )
@@ -1309,8 +1309,8 @@ def format_subscription_request_detail(request: SubscriptionRequest, user: User 
         f"Создана: {_fmt_dt(request.created_at)}\n"
         f"Обновлена: {_fmt_dt(request.updated_at)}\n\n"
         f"Пользователь: {name}\n"
-        f"Telegram ID: {request.telegram_id}\n"
-        f"Username: {username}\n\n"
+        f"ID Telegram: {request.telegram_id}\n"
+        f"Имя пользователя: {username}\n\n"
         f"Тариф: {request.plan_title}\n"
         f"Условия: {request.plan_description}\n"
         f"Стоимость: {format_price(request.price_rub)}\n"
@@ -1491,8 +1491,8 @@ def format_analysis_request_detail(request: MatchAnalysisRequest, user: User | N
         f"Создана: {_fmt_dt(request.created_at)}\n"
         f"Обновлена: {_fmt_dt(request.updated_at)}\n\n"
         f"Пользователь: {name}\n"
-        f"Telegram ID: {request.telegram_id}\n"
-        f"Username: {username}\n\n"
+        f"ID Telegram: {request.telegram_id}\n"
+        f"Имя пользователя: {username}\n\n"
         f"Матч:\n{request.match_text}\n\n"
         f"Реквизиты: {request.payment_details or '—'}\n"
         f"Специалист: {request.specialist_contact or '—'}"
@@ -1591,7 +1591,7 @@ def users_list_keyboard(items: list[tuple[User, UserAccess | None]], page: int, 
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"usr:list:{page+1}"))
     if nav:
         rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🔎 Найти по Telegram ID", callback_data="usr:search")])
+    rows.append([InlineKeyboardButton(text="🔎 Найти по ID Telegram", callback_data="usr:search")])
     rows.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=f"usr:list:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1645,8 +1645,8 @@ def format_user_detail(
     return (
         "👤 Пользователь\n\n"
         f"Имя: {_user_name(user)}\n"
-        f"Telegram ID: {user.telegram_id}\n"
-        f"Username: {username}\n"
+        f"ID Telegram: {user.telegram_id}\n"
+        f"Имя пользователя: {username}\n"
         f"Активен: {'да' if user.is_active else 'нет'}\n"
         f"Создан: {created}\n\n"
         f"Доступ: {_access_label(access)}\n"
@@ -1978,7 +1978,7 @@ async def user_search_start_callback(callback: CallbackQuery, state: FSMContext)
         return
     await state.set_state(UserSearchStates.waiting_for_telegram_id)
     if callback.message:
-        await callback.message.answer("Введите Telegram ID пользователя.")
+        await callback.message.answer("Введите ID Telegram пользователя.")
     await callback.answer()
 
 
@@ -1988,17 +1988,17 @@ async def user_search_by_telegram_id(message: Message, state: FSMContext) -> Non
         return
     raw = (message.text or "").strip()
     if not raw.isdigit():
-        await message.answer("Telegram ID должен быть числом. Попробуйте ещё раз.")
+        await message.answer("ID Telegram должен быть числом. Попробуйте ещё раз.")
         return
     telegram_id = int(raw)
     async with SessionFactory() as session:
         user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
     await state.clear()
     if user is None:
-        await message.answer("Пользователь с таким Telegram ID не найден.")
+        await message.answer("Пользователь с таким ID Telegram не найден.")
         return
     await message.answer(
-        f"Пользователь найден: {_user_name(user)}\nTelegram ID: {user.telegram_id}",
+        f"Пользователь найден: {_user_name(user)}\nID Telegram: {user.telegram_id}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Открыть карточку", callback_data=f"usr:view:{user.id}:0")],
             [InlineKeyboardButton(text="⬅️ К пользователям", callback_data="usr:list:0")],

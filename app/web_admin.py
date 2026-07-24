@@ -547,7 +547,7 @@ def _quality_table(title: str, items: list[QualityStatsItem]) -> str:
     rows = _quality_rows(items)
     return f"""
     <section><h2>{escape(title)}</h2>
-      <table><thead><tr><th>Срез</th><th>Отправлено</th><th>Оценено</th><th>Без результата</th><th>Зашло</th><th>Не зашло</th><th>Возврат</th><th>Неизвестно</th><th>Winrate</th></tr></thead><tbody>{rows}</tbody></table>
+      <table><thead><tr><th>Срез</th><th>Отправлено</th><th>Оценено</th><th>Без результата</th><th>Зашло</th><th>Не зашло</th><th>Возврат</th><th>Неизвестно</th><th>Процент захода</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     """
 
@@ -560,7 +560,7 @@ def render_quality_html(summary: QualitySummary, *, token: str = "") -> str:
         <div class="metric"><span>Отправлено</span><strong>{overall.sent_total}</strong></div>
         <div class="metric"><span>Оценено</span><strong>{overall.evaluated}</strong></div>
         <div class="metric"><span>Без результата</span><strong>{overall.unrated_sent}</strong></div>
-        <div class="metric"><span>Winrate</span><strong>{format_winrate(overall.counter.winrate)}</strong></div>
+        <div class="metric"><span>Процент захода</span><strong>{format_winrate(overall.counter.winrate)}</strong></div>
       </div>
     </section>
     {_quality_table('По группам', summary.by_group)}
@@ -673,7 +673,7 @@ def render_user_detail_html(detail: UserDetail, *, token: str = "") -> str:
     body = f"""
     <section><h2>Пользователь #{item.id}</h2>
       <dl class="details">
-        <dt>Telegram ID</dt><dd>{item.telegram_id}</dd>
+        <dt>ID Telegram</dt><dd>{item.telegram_id}</dd>
         <dt>Имя</dt><dd>{_user_name(item)}</dd>
         <dt>Статус</dt><dd>{_label('active' if item.is_active else 'inactive')}</dd>
         <dt>Доступ</dt><dd>{escape(_label(item.access_type))} / {escape(_label(item.access_status))}</dd>

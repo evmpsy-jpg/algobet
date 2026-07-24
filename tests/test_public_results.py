@@ -37,7 +37,7 @@ def test_format_public_results_shows_recent_results_without_admin_source() -> No
 
     assert "🏆 Результаты сигналов" in text
     assert "Оценено: 1 из 2" in text
-    assert "Winrate: 100.0%" in text
+    assert "Процент захода: 100.0%" in text
     assert "22.07 10:53" in text
     assert "✅ · TOP · П1" in text
     assert "счёт: 3:1" in text
@@ -49,4 +49,4 @@ def test_format_public_results_handles_empty_history() -> None:
     text = format_public_results([], total_sent=0)
 
     assert "пока нет оцененных сигналов" in text
-    assert "Winrate: —" in text
+    assert "Процент захода: —" in text

@@ -80,7 +80,7 @@ def test_format_analysis_request_detail_contains_request_user_and_match() -> Non
 
     assert "Заявка на анализ #12" in text
     assert "Евгений Мельников" in text
-    assert "Telegram ID: 315715137" in text
+    assert "ID Telegram: 315715137" in text
     assert "Игрок 1 — Игрок 2" in text
     assert "Карта 0000" in text
     assert "@spec" in text
