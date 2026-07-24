@@ -178,6 +178,25 @@ def _requests_path(kind_filter: str | None = None, status_filter: str | None = N
     return base + ("?" + "&".join(params) if params else "")
 
 
+ACCESS_TYPE_FILTER_LABELS = {
+    "trial": "Пробные",
+    "paid": "Платные",
+}
+ACCESS_STATUS_FILTER_LABELS = {
+    "active": "Активные",
+    "disabled": "Отключенные",
+}
+
+
+def _subscriptions_path(access_type_filter: str | None = None, access_status_filter: str | None = None) -> str:
+    params = []
+    if access_type_filter:
+        params.append(f"type={access_type_filter}")
+    if access_status_filter:
+        params.append(f"status={access_status_filter}")
+    return "/subscriptions" + ("?" + "&".join(params) if params else "")
+
+
 SIGNAL_RESULT_WEB_STATUSES = ("won", "lost", "void", "unknown")
 
 
@@ -337,6 +356,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Доставки", "/deliveries"),
             ("Статистика", "/quality"),
             ("Пользователи", "/users"),
+            ("Подписки", "/subscriptions"),
             ("Заявки", "/requests"),
             ("Настройки", "/settings"),
             ("Обслуживание", "/maintenance"),
@@ -684,6 +704,49 @@ def render_users_html(users: list[UserListItem], *, token: str = "", search: str
     </section>
     """
     return _base_html("Пользователи", body, token=token)
+
+
+def render_subscriptions_html(
+    users: list[UserListItem],
+    *,
+    token: str = "",
+    access_type_filter: str | None = None,
+    access_status_filter: str | None = None,
+) -> str:
+    type_filters = "".join(
+        f'<a class="button" href="{_token_href(_subscriptions_path(type_value, access_status_filter), token)}">{label}</a>'
+        for label, type_value in [("Все типы", None), ("Пробные", "trial"), ("Платные", "paid")]
+    )
+    status_filters = "".join(
+        f'<a class="button" href="{_token_href(_subscriptions_path(access_type_filter, status_value), token)}">{label}</a>'
+        for label, status_value in [("Все статусы", None), ("Активные", "active"), ("Отключенные", "disabled")]
+    )
+    type_title = ACCESS_TYPE_FILTER_LABELS.get(access_type_filter or "", "Все типы")
+    status_title = ACCESS_STATUS_FILTER_LABELS.get(access_status_filter or "", "Все статусы")
+    rows = "".join(
+        f"""
+        <tr>
+          <td><a href="{_token_href(f'/users/{user.id}', token)}">#{user.id}</a></td>
+          <td>{user.telegram_id}</td>
+          <td>{_user_name(user)}</td>
+          <td>{escape(_label(user.access_type))}</td>
+          <td>{escape(_label(user.access_status))}</td>
+          <td>{user.signals_remaining if user.signals_remaining is not None else '-'}</td>
+          <td>{user.free_signals_remaining if user.free_signals_remaining is not None else '-'}</td>
+          <td>{_fmt_dt(user.active_until)}</td>
+          <td class="optional">{user.sent_deliveries} / {user.failed_deliveries}</td>
+        </tr>
+        """
+        for user in users
+    ) or '<tr><td colspan="9" class="muted">Подписок пока нет.</td></tr>'
+    body = f"""
+    <section><h2>Подписки: {escape(type_title)} · {escape(status_title)}</h2>
+      <div class="filters">{type_filters}</div>
+      <div class="filters">{status_filters}</div>
+      <table><thead><tr><th>ID</th><th>ID Telegram</th><th>Имя</th><th>Тип</th><th>Статус</th><th>Платных</th><th>Пробных</th><th>До</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{rows}</tbody></table>
+    </section>
+    """
+    return _base_html("Подписки", body, token=token)
 
 
 def render_requests_html(
@@ -1058,6 +1121,31 @@ async def users(_: Annotated[None, Depends(require_web_admin)], request: Request
     async with SessionFactory() as session:
         rows = await collect_user_list(session, search=search)
     return HTMLResponse(render_users_html(rows, token="", search=search))
+
+
+@app.get("/subscriptions", response_class=HTMLResponse)
+async def subscriptions(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    access_type_filter = request.query_params.get("type") or None
+    if access_type_filter not in ACCESS_TYPE_FILTER_LABELS:
+        access_type_filter = None
+    access_status_filter = request.query_params.get("status") or None
+    if access_status_filter not in ACCESS_STATUS_FILTER_LABELS:
+        access_status_filter = None
+    async with SessionFactory() as session:
+        rows = await collect_user_list(
+            session,
+            access_type_filter=access_type_filter,
+            access_status_filter=access_status_filter,
+            limit=200,
+        )
+    return HTMLResponse(
+        render_subscriptions_html(
+            rows,
+            token="",
+            access_type_filter=access_type_filter,
+            access_status_filter=access_status_filter,
+        )
+    )
 
 
 @app.get("/requests", response_class=HTMLResponse)

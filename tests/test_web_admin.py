@@ -38,6 +38,7 @@ from app.web_admin import (
     render_requests_html,
     render_settings_html,
     render_signal_detail_html,
+    render_subscriptions_html,
     render_signals_csv,
     render_signals_html,
     render_user_detail_html,
@@ -275,6 +276,39 @@ def test_render_users_html_shows_access_and_delivery_counts() -> None:
     assert "@admin" in html
     assert "Платный / Активен" in html
     assert "3 / 1" in html
+    assert "/users/1" in html
+
+
+def test_render_subscriptions_html_shows_filters_and_user_rows() -> None:
+    html = render_subscriptions_html(
+        [
+            UserListItem(
+                id=1,
+                telegram_id=315715137,
+                username="admin",
+                first_name="Admin",
+                last_name="User",
+                is_active=True,
+                access_type="paid",
+                access_status="active",
+                free_signals_remaining=0,
+                signals_remaining=9,
+                active_until=datetime(2026, 7, 30, 10, 0),
+                sent_deliveries=3,
+                failed_deliveries=1,
+            )
+        ],
+        token="secret",
+        access_type_filter="paid",
+        access_status_filter="active",
+    )
+
+    assert "Подписки: Платные" in html
+    assert "/subscriptions?type=trial&status=active" in html
+    assert "/subscriptions?type=paid&status=disabled" in html
+    assert "@admin" in html
+    assert "Платный" in html
+    assert "Активен" in html
     assert "/users/1" in html
 
 

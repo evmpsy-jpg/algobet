@@ -142,6 +142,8 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
         users_by_id = await collect_user_list(session, search="1001")
         users_by_username = await collect_user_list(session, search="inactive")
         users_by_missing = await collect_user_list(session, search="missing")
+        paid_users = await collect_user_list(session, access_type_filter="paid", access_status_filter="active")
+        trial_users = await collect_user_list(session, access_type_filter="trial", access_status_filter="active")
         requests = await collect_request_list(session)
         subscription_requests = await collect_request_list(session, kind_filter="subscription")
         analysis_requests = await collect_request_list(session, kind_filter="analysis")
@@ -197,6 +199,8 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert [item.telegram_id for item in users_by_id] == [1001]
     assert [item.username for item in users_by_username] == ["inactive_user"]
     assert users_by_missing == []
+    assert [item.telegram_id for item in paid_users] == [1001]
+    assert [item.telegram_id for item in trial_users] == [1002]
 
     assert [item.kind for item in requests] == ["subscription", "analysis"]
     assert [item.kind for item in subscription_requests] == ["subscription"]
