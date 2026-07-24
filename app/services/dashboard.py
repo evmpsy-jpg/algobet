@@ -108,6 +108,22 @@ class RequestListItem:
 
 
 
+
+
+@dataclass(frozen=True)
+class DeliveryListItem:
+    id: int
+    signal_id: int
+    status: str
+    telegram_id: int
+    username: str | None
+    match_title: str
+    signal_group: str
+    sent_at: datetime | None
+    created_at: datetime
+    error_text: str | None
+
+
 @dataclass(frozen=True)
 class SignalDeliveryListItem:
     id: int
@@ -403,6 +419,40 @@ async def collect_user_list(session: AsyncSession, *, limit: int = 50) -> list[U
             failed_deliveries=delivery_counts.get(user.id, {}).get("failed", 0),
         )
         for user, access in rows
+    ]
+
+
+async def collect_delivery_list(
+    session: AsyncSession,
+    *,
+    status_filter: str | None = None,
+    limit: int = 100,
+) -> list[DeliveryListItem]:
+    query = (
+        select(SignalDelivery, ScheduledSignal, Match, User)
+        .join(ScheduledSignal, ScheduledSignal.id == SignalDelivery.signal_id)
+        .join(Match, Match.id == ScheduledSignal.match_id)
+        .outerjoin(User, User.id == SignalDelivery.user_id)
+        .order_by(desc(SignalDelivery.id))
+        .limit(limit)
+    )
+    if status_filter:
+        query = query.where(SignalDelivery.status == status_filter)
+    rows = (await session.execute(query)).all()
+    return [
+        DeliveryListItem(
+            id=delivery.id,
+            signal_id=signal.id,
+            status=delivery.status,
+            telegram_id=delivery.telegram_id,
+            username=user.username if user is not None else None,
+            match_title=f"{match.player_1} - {match.player_2}",
+            signal_group=str((signal.signal_payload or {}).get("signal_group") or "-"),
+            sent_at=delivery.sent_at,
+            created_at=delivery.created_at,
+            error_text=delivery.error_text,
+        )
+        for delivery, signal, match, user in rows
     ]
 
 

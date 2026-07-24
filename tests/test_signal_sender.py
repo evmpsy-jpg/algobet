@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, Match, ScheduledSignal, SignalDelivery, User, UserAccess
-from app.services.signal_sender import process_due_signals, process_signal_now
+from app.services.signal_sender import process_delivery_now, process_due_signals, process_signal_now
 
 
 class FakeBot:
@@ -298,4 +298,54 @@ async def test_process_signal_now_retries_failed_without_duplicate_sent_delivery
         assert access_failed.free_signals_remaining == 2
         assert [delivery.status for delivery in deliveries] == ["sent", "sent"]
         assert deliveries[1].error_text is None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_process_delivery_now_retries_selected_failed_delivery() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        user = User(telegram_id=888, username=None, first_name="Retry", last_name=None)
+        session.add(user)
+        await session.flush()
+        access = UserAccess(user_id=user.id, access_type="trial", status="active", free_signals_remaining=3)
+        match = make_match()
+        session.add_all([access, match])
+        await session.flush()
+        signal = ScheduledSignal(
+            match_id=match.id,
+            status="ready",
+            send_at=datetime(2026, 7, 21, 11, 40, tzinfo=timezone.utc),
+            signal_payload={},
+            message_text="retry selected",
+        )
+        session.add(signal)
+        await session.flush()
+        delivery = SignalDelivery(
+            signal_id=signal.id,
+            user_id=user.id,
+            telegram_id=user.telegram_id,
+            status="failed",
+            error_text="previous error",
+        )
+        session.add(delivery)
+        await session.commit()
+
+        bot = FakeBot()
+        summary = await process_delivery_now(
+            bot,  # type: ignore[arg-type]
+            session,
+            delivery.id,
+            admin_ids=[],
+        )
+
+        saved = await session.get(SignalDelivery, delivery.id)
+
+        assert summary.processed_signals == 1
+        assert summary.sent_deliveries == 1
+        assert bot.messages == [(888, "retry selected")]
+        assert saved is not None
+        assert saved.status == "sent"
+        assert saved.error_text is None
+        assert access.free_signals_remaining == 2
     await engine.dispose()

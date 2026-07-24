@@ -18,7 +18,7 @@ from app.database.models import (
     User,
     UserAccess,
 )
-from app.services.dashboard import collect_dashboard_summary, collect_maintenance_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
+from app.services.dashboard import collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
 
 
 @pytest.mark.asyncio
@@ -104,6 +104,7 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
         session.add_all(
             [
                 SignalDelivery(signal_id=signal.id, user_id=user.id, telegram_id=user.telegram_id, status="sent"),
+                SignalDelivery(signal_id=signal.id, user_id=inactive_user.id, telegram_id=inactive_user.telegram_id, status="failed", error_text="telegram unavailable"),
                 SignalResult(signal_id=signal.id, status="won", source="auto"),
                 SubscriptionRequest(
                     user_id=user.id,
@@ -137,6 +138,8 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
         signals = await collect_signal_list(session)
         users = await collect_user_list(session)
         requests = await collect_request_list(session)
+        deliveries = await collect_delivery_list(session)
+        failed_deliveries = await collect_delivery_list(session, status_filter="failed")
         signal_detail = await collect_signal_detail(session, signal.id)
         user_detail = await collect_user_detail(session, user.id)
         subscription_detail = await collect_request_detail(session, "subscription", 1)
@@ -153,8 +156,8 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert summary.imports_total == 1
     assert summary.signals_total == 1
     assert summary.signals_by_status == {"sent": 1}
-    assert summary.deliveries_total == 1
-    assert summary.deliveries_by_status == {"sent": 1}
+    assert summary.deliveries_total == 2
+    assert summary.deliveries_by_status == {"failed": 1, "sent": 1}
     assert summary.results_by_status == {"won": 1}
     assert summary.open_subscription_requests == 1
     assert summary.open_analysis_requests == 1
@@ -167,17 +170,24 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
 
     assert len(signals) == 1
     assert signals[0].sent_deliveries == 1
-    assert signals[0].failed_deliveries == 0
+    assert signals[0].failed_deliveries == 1
+    assert len(deliveries) == 2
+    assert deliveries[0].status == "failed"
+    assert deliveries[0].error_text == "telegram unavailable"
+    assert deliveries[0].match_title == "Player 1 - Player 2"
+    assert len(failed_deliveries) == 1
+    assert failed_deliveries[0].telegram_id == inactive_user.telegram_id
 
     assert len(users) == 2
     assert users[0].telegram_id == 1002
+    assert users[0].failed_deliveries == 1
     assert users[1].sent_deliveries == 1
 
     assert [item.kind for item in requests] == ["subscription", "analysis"]
     assert signal_detail is not None
     assert signal_detail.item.id == signal.id
     assert signal_detail.external_match_id == 501
-    assert len(signal_detail.deliveries) == 1
+    assert len(signal_detail.deliveries) == 2
     assert user_detail is not None
     assert user_detail.item.telegram_id == 1001
     assert len(user_detail.deliveries) == 1

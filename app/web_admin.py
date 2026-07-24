@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import csv
 import hmac
+from io import StringIO
 from contextlib import asynccontextmanager
+from datetime import datetime
 from html import escape
 from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from aiogram import Bot
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+from app.database.models import MatchAnalysisRequest, SubscriptionRequest, User
 from app.database.session import SessionFactory, init_db
+from app.services.access import grant_subscription_access
+from app.services.signal_sender import process_delivery_now
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
@@ -20,6 +27,7 @@ from app.services.dashboard import (
     UserDetail,
     UserListItem,
     collect_dashboard_summary,
+    collect_delivery_list,
     collect_maintenance_summary,
     collect_request_detail,
     collect_request_list,
@@ -128,6 +136,55 @@ def _bool_label(value) -> str:
     return str(value)
 
 
+SUBSCRIPTION_WEB_STATUSES = ("new", "paid", "done", "cancelled")
+ANALYSIS_WEB_STATUSES = ("new", "in_progress", "done", "cancelled")
+
+
+def _request_status_buttons(kind: str, request_id: int, current_status: str) -> str:
+    statuses = SUBSCRIPTION_WEB_STATUSES if kind == "subscription" else ANALYSIS_WEB_STATUSES if kind == "analysis" else ()
+    buttons = []
+    for next_status in statuses:
+        classes = "action-button"
+        if next_status == current_status:
+            classes += " current"
+        if next_status == "cancelled":
+            classes += " danger"
+        buttons.append(
+            f'<form method="post" action="/requests/{escape(kind)}/{request_id}/status/{escape(next_status)}">'
+            f'<button class="{classes}" type="submit">{escape(_label(next_status))}</button>'
+            "</form>"
+        )
+    return "".join(buttons)
+
+
+async def update_web_request_status(session, kind: str, request_id: int, new_status: str) -> bool:
+    if kind == "subscription":
+        if new_status not in SUBSCRIPTION_WEB_STATUSES:
+            raise ValueError("Unknown subscription status")
+        request = await session.get(SubscriptionRequest, request_id)
+        if request is None:
+            return False
+        request.status = new_status
+        request.updated_at = datetime.utcnow()
+        if new_status in {"paid", "done"}:
+            user = await session.get(User, request.user_id)
+            if user is not None:
+                await grant_subscription_access(session, user, request)
+        await session.commit()
+        return True
+    if kind == "analysis":
+        if new_status not in ANALYSIS_WEB_STATUSES:
+            raise ValueError("Unknown analysis status")
+        request = await session.get(MatchAnalysisRequest, request_id)
+        if request is None:
+            return False
+        request.status = new_status
+        request.updated_at = datetime.utcnow()
+        await session.commit()
+        return True
+    raise ValueError("Unknown request kind")
+
+
 def _fmt_counts(counts: dict[str, int]) -> str:
     if not counts:
         return '<span class="muted">нет данных</span>'
@@ -181,6 +238,11 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     nav {{ display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }}
     nav a, a.button {{ display:inline-flex; align-items:center; justify-content:center; min-height:34px; padding:0 12px; background:#eef4fb; color:var(--accent); text-decoration:none; border-radius:6px; font-weight:700; }}
     a.button {{ background:var(--accent); color:#fff; }}
+    .actions {{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }}
+    .actions form {{ margin:0; }}
+    .action-button {{ min-height:34px; padding:0 12px; border:0; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; font-weight:700; }}
+    .action-button.current {{ background:#d9e4f2; color:var(--text); }}
+    .action-button.danger {{ background:#b42318; color:#fff; }}
     .muted {{ color:var(--muted); }}
     .grid {{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:18px; }}
     .metric, section {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; }}
@@ -300,11 +362,80 @@ def render_signals_html(signals: list[SignalListItem], *, token: str = "", statu
     body = f"""
     <section>
       <h2>Сигналы: {escape(_label(status_filter or 'all'))}</h2>
-      <div class="filters">{filters}</div>
+      <div class="filters">{filters}<a class="button" href="{_token_href('/deliveries/export.csv' + ('?status=' + status_filter if status_filter else ''), token)}">CSV</a></div>
       <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Матч</th><th>Результат</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{_signal_rows(signals, token=token)}</tbody></table>
     </section>
     """
     return _base_html("Сигналы", body, token=token)
+
+
+def _delivery_retry_action(delivery_id: int, current_status: str, status_filter: str | None) -> str:
+    if current_status == "sent":
+        return "-"
+    target = f"/deliveries/{delivery_id}/retry"
+    if status_filter:
+        target += f"?status={escape(status_filter)}"
+    return (
+        f'<form method="post" action="{target}">'
+        '<button class="action-button" type="submit">Повторить</button>'
+        '</form>'
+    )
+
+
+def render_deliveries_csv(deliveries) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id", "signal_id", "status", "telegram_id", "username", "signal_group", "match", "time", "error"])
+    for delivery in deliveries:
+        writer.writerow([
+            delivery.id,
+            delivery.signal_id,
+            delivery.status,
+            delivery.telegram_id,
+            delivery.username or "",
+            delivery.signal_group,
+            delivery.match_title,
+            _fmt_dt(delivery.sent_at or delivery.created_at),
+            delivery.error_text or "",
+        ])
+    return output.getvalue()
+
+
+def render_deliveries_html(deliveries, *, token: str = "", status_filter: str | None = None) -> str:
+    filters = "".join(
+        f'<a class="button" href="{_token_href(path, token)}">{label}</a>'
+        for label, path in [
+            ("Все", "/deliveries"),
+            ("Отправлено", "/deliveries?status=sent"),
+            ("Ошибка", "/deliveries?status=failed"),
+            ("Ожидает", "/deliveries?status=pending"),
+        ]
+    )
+    rows = "".join(
+        f"""
+        <tr>
+          <td>#{delivery.id}</td>
+          <td><a href="{_token_href(f'/signals/{delivery.signal_id}', token)}">#{delivery.signal_id}</a></td>
+          <td>{escape(_label(delivery.status))}</td>
+          <td>{delivery.telegram_id}</td>
+          <td>{escape('@' + delivery.username if delivery.username else '-')}</td>
+          <td>{escape(delivery.signal_group.upper())}</td>
+          <td>{escape(delivery.match_title)}</td>
+          <td>{_fmt_dt(delivery.sent_at or delivery.created_at)}</td>
+          <td class="optional">{escape((delivery.error_text or '-')[:180])}</td>
+          <td>{_delivery_retry_action(delivery.id, delivery.status, status_filter)}</td>
+        </tr>
+        """
+        for delivery in deliveries
+    ) or '<tr><td colspan="9" class="muted">Доставок пока нет.</td></tr>'
+    body = f"""
+    <section>
+      <h2>Доставки: {escape(_label(status_filter or 'all'))}</h2>
+      <div class="filters">{filters}<a class="button" href="{_token_href('/deliveries/export.csv' + ('?status=' + status_filter if status_filter else ''), token)}">CSV</a></div>
+      <table><thead><tr><th>ID</th><th>Сигнал</th><th>Статус</th><th>Telegram</th><th>Пользователь</th><th>Группа</th><th>Матч</th><th>Время</th><th class="optional">Ошибка</th></tr></thead><tbody>{rows}</tbody></table>
+    </section>
+    """
+    return _base_html("Доставки", body, token=token)
 
 
 def render_users_html(users: list[UserListItem], *, token: str = "") -> str:
@@ -427,6 +558,7 @@ def render_user_detail_html(detail: UserDetail, *, token: str = "") -> str:
 
 def render_request_detail_html(detail: RequestDetail, *, token: str = "") -> str:
     item = detail.item
+    actions = _request_status_buttons(item.kind, item.id, item.status)
     body = f"""
     <section><h2>Заявка: {escape(_label(item.kind))} #{item.id}</h2>
       <dl class="details">
@@ -439,6 +571,7 @@ def render_request_detail_html(detail: RequestDetail, *, token: str = "") -> str
         <dt>Создано</dt><dd>{_fmt_dt(item.created_at)}</dd>
         <dt>Обновлено</dt><dd>{_fmt_dt(detail.updated_at)}</dd>
       </dl>
+      <div class="actions">{actions}</div>
     </section>
     """
     return _base_html(f"Заявка #{item.id}", body, token=token)
@@ -483,6 +616,45 @@ async def signals(_: Annotated[None, Depends(require_web_admin)], request: Reque
     async with SessionFactory() as session:
         rows = await collect_signal_list(session, status_filter=status_filter)
     return HTMLResponse(render_signals_html(rows, token="", status_filter=status_filter))
+
+
+@app.get("/deliveries", response_class=HTMLResponse)
+async def deliveries(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    status_filter = request.query_params.get("status") or None
+    async with SessionFactory() as session:
+        rows = await collect_delivery_list(session, status_filter=status_filter)
+    return HTMLResponse(render_deliveries_html(rows, token="", status_filter=status_filter))
+
+
+@app.get("/deliveries/export.csv")
+async def deliveries_export(_: Annotated[None, Depends(require_web_admin)], request: Request) -> Response:
+    status_filter = request.query_params.get("status") or None
+    async with SessionFactory() as session:
+        rows = await collect_delivery_list(session, status_filter=status_filter, limit=10000)
+    content = render_deliveries_csv(rows)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=algobet-deliveries.csv"},
+    )
+
+
+@app.post("/deliveries/{delivery_id}/retry")
+async def delivery_retry(
+    delivery_id: int,
+    _: Annotated[None, Depends(require_web_admin)],
+    request: Request,
+) -> RedirectResponse:
+    settings = get_settings()
+    bot = Bot(token=settings.bot_token)
+    try:
+        async with SessionFactory() as session:
+            await process_delivery_now(bot, session, delivery_id, admin_ids=settings.admin_ids)
+    finally:
+        await bot.session.close()
+    status_filter = request.query_params.get("status")
+    suffix = f"?status={status_filter}" if status_filter else ""
+    return RedirectResponse(url=f"/deliveries{suffix}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/users", response_class=HTMLResponse)
@@ -530,5 +702,22 @@ async def request_detail(kind: str, request_id: int, _: Annotated[None, Depends(
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
     return HTMLResponse(render_request_detail_html(detail, token=""))
+
+
+@app.post("/requests/{kind}/{request_id}/status/{new_status}")
+async def request_status_update(
+    kind: str,
+    request_id: int,
+    new_status: str,
+    _: Annotated[None, Depends(require_web_admin)],
+) -> RedirectResponse:
+    try:
+        async with SessionFactory() as session:
+            updated = await update_web_request_status(session, kind, request_id, new_status)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+    return RedirectResponse(url=f"/requests/{kind}/{request_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 

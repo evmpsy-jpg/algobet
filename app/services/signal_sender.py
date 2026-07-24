@@ -186,6 +186,61 @@ async def process_signal_now(
     )
 
 
+async def process_delivery_now(
+    bot: Bot,
+    session: AsyncSession,
+    delivery_id: int,
+    *,
+    admin_ids: list[int] | None = None,
+) -> SenderSummary:
+    admin_ids = get_settings().admin_ids if admin_ids is None else admin_ids
+    summary = SenderSummary()
+    row = (
+        await session.execute(
+            select(SignalDelivery, ScheduledSignal, User, UserAccess)
+            .join(ScheduledSignal, ScheduledSignal.id == SignalDelivery.signal_id)
+            .join(User, User.id == SignalDelivery.user_id)
+            .outerjoin(UserAccess, UserAccess.user_id == User.id)
+            .where(SignalDelivery.id == delivery_id)
+        )
+    ).first()
+    if row is None:
+        return summary
+
+    delivery, signal, user, access = row
+    summary.processed_signals = 1
+    if delivery.status == "sent":
+        summary.skipped_users = 1
+        return summary
+    now_utc = datetime.utcnow()
+    if not has_signal_access(user, access, admin_ids=admin_ids, now=now_utc, signal_payload=signal.signal_payload):
+        summary.skipped_users = 1
+        return summary
+
+    delivery.status = "pending"
+    delivery.error_text = None
+    try:
+        await bot.send_message(
+            chat_id=user.telegram_id,
+            text=signal.message_text,
+            disable_web_page_preview=True,
+        )
+    except Exception as exc:
+        delivery.status = "failed"
+        delivery.error_text = str(exc)[:1000]
+        summary.failed_deliveries = 1
+        logger.warning("Не удалось повторно отправить доставку %s пользователю %s: %s", delivery.id, user.telegram_id, exc)
+    else:
+        delivery.status = "sent"
+        delivery.sent_at = now_utc
+        signal.status = "sent"
+        signal.sent_at = signal.sent_at or now_utc
+        consume_signal_access(user, access, admin_ids=admin_ids, signal_payload=signal.signal_payload)
+        summary.sent_deliveries = 1
+    await session.commit()
+    return summary
+
+
 async def signal_sender_loop(bot: Bot) -> None:
     settings = get_settings()
     while True:

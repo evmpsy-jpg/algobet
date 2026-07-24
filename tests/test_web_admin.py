@@ -4,14 +4,18 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fastapi import HTTPException
 from fastapi.security import HTTPBasicCredentials
 
+from app.database.models import Base, MatchAnalysisRequest, SubscriptionRequest, User, UserAccess
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
     LatestImportSummary,
     RecentSignalSummary,
+    DeliveryListItem,
     RequestDetail,
     RequestListItem,
     SignalDetail,
@@ -21,6 +25,8 @@ from app.services.dashboard import (
 )
 from app.web_admin import (
     render_dashboard_html,
+    render_deliveries_csv,
+    render_deliveries_html,
     render_maintenance_html,
     render_request_detail_html,
     render_requests_html,
@@ -29,6 +35,7 @@ from app.web_admin import (
     render_user_detail_html,
     render_users_html,
     require_web_admin,
+    update_web_request_status,
 )
 
 
@@ -111,6 +118,56 @@ def test_render_signals_html_shows_filters_and_delivery_counts() -> None:
     assert "Player &lt;One&gt;" in html
     assert "5 / 1" in html
     assert "/signals/11" in html
+
+
+def test_render_deliveries_html_shows_filters_and_errors() -> None:
+    html = render_deliveries_html(
+        [
+            DeliveryListItem(
+                id=5,
+                signal_id=11,
+                status="failed",
+                telegram_id=315715137,
+                username="admin",
+                match_title="Player <One> - Player Two",
+                signal_group="vip",
+                sent_at=None,
+                created_at=datetime(2026, 7, 24, 11, 45),
+                error_text="telegram <unavailable>",
+            )
+        ],
+        token="secret",
+        status_filter="failed",
+    )
+
+    assert "Доставки: Ошибка" in html
+    assert "/deliveries?status=sent" in html
+    assert "/deliveries/export.csv?status=failed" in html
+    assert "/signals/11" in html
+    assert "Player &lt;One&gt; - Player Two" in html
+    assert "telegram &lt;unavailable&gt;" in html
+    assert 'action="/deliveries/5/retry?status=failed"' in html
+    assert "Повторить" in html
+
+
+def test_render_deliveries_csv_exports_rows() -> None:
+    csv_text = render_deliveries_csv([
+        DeliveryListItem(
+            id=5,
+            signal_id=11,
+            status="failed",
+            telegram_id=315715137,
+            username="admin",
+            match_title="Player One - Player Two",
+            signal_group="vip",
+            sent_at=None,
+            created_at=datetime(2026, 7, 24, 11, 45),
+            error_text="telegram unavailable",
+        )
+    ])
+
+    assert csv_text.splitlines()[0] == "id,signal_id,status,telegram_id,username,signal_group,match,time,error"
+    assert "5,11,failed,315715137,admin,vip,Player One - Player Two,24.07.2026 11:45,telegram unavailable" in csv_text
 
 
 def test_render_users_html_shows_access_and_delivery_counts() -> None:
@@ -227,6 +284,8 @@ def test_render_request_detail_html_shows_payment_and_contact() -> None:
     assert "Заявка: Подписка #7" in html
     assert "Card &lt;123&gt;" in html
     assert "@spec" in html
+    assert 'action="/requests/subscription/7/status/done"' in html
+    assert "Выполнена" in html
 
 
 def test_render_maintenance_html_shows_storage_and_backup_settings() -> None:
@@ -279,3 +338,80 @@ def test_require_web_admin_requires_configured_credentials(monkeypatch) -> None:
         require_web_admin(HTTPBasicCredentials(username="admin", password="secret"))
 
     assert exc.value.status_code == 503
+
+
+async def make_session():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    return engine, factory
+
+
+@pytest.mark.asyncio
+async def test_update_web_subscription_status_grants_access() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        user = User(telegram_id=777, username="buyer", first_name="Buyer", last_name=None)
+        session.add(user)
+        await session.flush()
+        request = SubscriptionRequest(
+            user_id=user.id,
+            telegram_id=user.telegram_id,
+            username=user.username,
+            plan_id="vip_10",
+            plan_group="vip",
+            plan_title="VIP 99%",
+            plan_description="10 signals",
+            price_rub=2500,
+            signals_limit=10,
+            includes_vip=True,
+            status="new",
+        )
+        session.add(request)
+        await session.commit()
+
+        updated = await update_web_request_status(session, "subscription", request.id, "done")
+
+        saved_request = await session.get(SubscriptionRequest, request.id)
+        access = await session.scalar(select(UserAccess).where(UserAccess.user_id == user.id))
+
+    await engine.dispose()
+
+    assert updated is True
+    assert saved_request is not None
+    assert saved_request.status == "done"
+    assert access is not None
+    assert access.access_type == "paid"
+    assert access.status == "active"
+    assert access.plan_id == "vip_10"
+    assert access.signals_remaining == 10
+    assert access.includes_vip is True
+
+
+@pytest.mark.asyncio
+async def test_update_web_analysis_status_changes_request_only() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        user = User(telegram_id=778, username="analyst", first_name="Analyst", last_name=None)
+        session.add(user)
+        await session.flush()
+        request = MatchAnalysisRequest(
+            user_id=user.id,
+            telegram_id=user.telegram_id,
+            username=user.username,
+            match_text="Player A - Player B",
+            status="new",
+        )
+        session.add(request)
+        await session.commit()
+
+        updated = await update_web_request_status(session, "analysis", request.id, "in_progress")
+
+        saved_request = await session.get(MatchAnalysisRequest, request.id)
+
+    await engine.dispose()
+
+    assert updated is True
+    assert saved_request is not None
+    assert saved_request.status == "in_progress"
