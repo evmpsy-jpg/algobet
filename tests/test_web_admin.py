@@ -31,6 +31,7 @@ from app.services.bot_settings import PaymentConfig, get_analysis_payment_config
 from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
     log_web_admin_action,
+    render_audit_csv,
     render_audit_html,
     render_dashboard_html,
     render_deliveries_csv,
@@ -544,6 +545,24 @@ def test_render_audit_html_shows_action_rows() -> None:
     assert "Заявка на подписку" in html
     assert "new" in html
     assert "done" in html
+    assert "/audit/export.csv" in html
+
+
+def test_render_audit_csv_exports_rows() -> None:
+    csv_text = render_audit_csv([
+        WebAdminActionLog(
+            actor_username="admin",
+            action="request_status_update",
+            target_type="subscription_request",
+            target_id="7",
+            details={"old_status": "new", "new_status": "done"},
+            created_at=datetime(2026, 7, 24, 11, 0),
+        )
+    ])
+
+    assert csv_text.splitlines()[0] == "created_at,actor_username,action,target_type,target_id,details"
+    assert "24.07.2026 11:00,admin,request_status_update,subscription_request,7" in csv_text
+    assert "old_status" in csv_text
 
 
 @pytest.mark.asyncio

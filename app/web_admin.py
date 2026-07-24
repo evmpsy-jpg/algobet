@@ -1102,10 +1102,27 @@ def render_audit_html(logs: list[WebAdminActionLog], *, token: str = "") -> str:
     ) or '<tr><td colspan="6" class="muted">Записей пока нет.</td></tr>'
     body = f"""
     <section><h2>Журнал действий</h2>
+      <div class="filters"><a class="button" href="{_token_href('/audit/export.csv', token)}">CSV</a></div>
       <table><thead><tr><th>Время</th><th>Админ</th><th>Действие</th><th>Объект</th><th>ID</th><th>Детали</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     """
     return _base_html("Журнал", body, token=token)
+
+
+def render_audit_csv(logs: list[WebAdminActionLog]) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["created_at", "actor_username", "action", "target_type", "target_id", "details"])
+    for log in logs:
+        writer.writerow([
+            _fmt_dt(log.created_at),
+            log.actor_username,
+            log.action,
+            log.target_type,
+            log.target_id or "",
+            str(log.details or {}),
+        ])
+    return output.getvalue()
 
 
 def render_settings_html(analysis_config: PaymentConfig, subscription_config: PaymentConfig, *, token: str = "", message: str = "") -> str:
@@ -1203,6 +1220,22 @@ async def audit(_: Annotated[str, Depends(require_web_admin)], request: Request)
             )
         ).all()
     return HTMLResponse(render_audit_html(list(logs), token=""))
+
+
+@app.get("/audit/export.csv")
+async def audit_export(_: Annotated[str, Depends(require_web_admin)], request: Request) -> Response:
+    async with SessionFactory() as session:
+        logs = (
+            await session.scalars(
+                select(WebAdminActionLog).order_by(desc(WebAdminActionLog.id)).limit(10000)
+            )
+        ).all()
+    content = render_audit_csv(list(logs))
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=algobet-audit.csv"},
+    )
 
 
 @app.get("/settings", response_class=HTMLResponse)
