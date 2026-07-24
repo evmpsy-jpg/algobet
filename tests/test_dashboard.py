@@ -143,6 +143,10 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
         users_by_username = await collect_user_list(session, search="inactive")
         users_by_missing = await collect_user_list(session, search="missing")
         requests = await collect_request_list(session)
+        subscription_requests = await collect_request_list(session, kind_filter="subscription")
+        analysis_requests = await collect_request_list(session, kind_filter="analysis")
+        new_requests = await collect_request_list(session, status_filter="new")
+        done_requests = await collect_request_list(session, status_filter="done")
         deliveries = await collect_delivery_list(session)
         failed_deliveries = await collect_delivery_list(session, status_filter="failed")
         signal_detail = await collect_signal_detail(session, signal.id)
@@ -195,6 +199,10 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert users_by_missing == []
 
     assert [item.kind for item in requests] == ["subscription", "analysis"]
+    assert [item.kind for item in subscription_requests] == ["subscription"]
+    assert [item.kind for item in analysis_requests] == ["analysis"]
+    assert [item.kind for item in new_requests] == ["subscription", "analysis"]
+    assert done_requests == []
     assert signal_detail is not None
     assert signal_detail.item.id == signal.id
     assert signal_detail.external_match_id == 501

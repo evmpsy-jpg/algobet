@@ -144,6 +144,28 @@ SUBSCRIPTION_WEB_STATUSES = ("new", "paid", "done", "cancelled")
 ANALYSIS_WEB_STATUSES = ("new", "in_progress", "done", "cancelled")
 
 
+REQUEST_KIND_FILTER_LABELS = {
+    "subscription": "Подписки",
+    "analysis": "Анализы",
+}
+REQUEST_STATUS_FILTER_LABELS = {
+    "new": "Новые",
+    "paid": "Оплаченные",
+    "in_progress": "В работе",
+    "done": "Выполненные",
+    "cancelled": "Отмененные",
+}
+
+
+def _requests_path(kind_filter: str | None = None, status_filter: str | None = None) -> str:
+    params = []
+    if kind_filter:
+        params.append(f"kind={kind_filter}")
+    if status_filter:
+        params.append(f"status={status_filter}")
+    return "/requests" + ("?" + "&".join(params) if params else "")
+
+
 SIGNAL_RESULT_WEB_STATUSES = ("won", "lost", "void", "unknown")
 
 
@@ -610,7 +632,34 @@ def render_users_html(users: list[UserListItem], *, token: str = "", search: str
     return _base_html("Пользователи", body, token=token)
 
 
-def render_requests_html(requests: list[RequestListItem], *, token: str = "") -> str:
+def render_requests_html(
+    requests: list[RequestListItem],
+    *,
+    token: str = "",
+    kind_filter: str | None = None,
+    status_filter: str | None = None,
+) -> str:
+    kind_filters = "".join(
+        f'<a class="button" href="{_token_href(_requests_path(kind, status_filter), token)}">{label}</a>'
+        for label, kind in [
+            ("Все типы", None),
+            ("Подписки", "subscription"),
+            ("Анализы", "analysis"),
+        ]
+    )
+    status_filters = "".join(
+        f'<a class="button" href="{_token_href(_requests_path(kind_filter, status_value), token)}">{label}</a>'
+        for label, status_value in [
+            ("Все статусы", None),
+            ("Новые", "new"),
+            ("Оплаченные", "paid"),
+            ("В работе", "in_progress"),
+            ("Выполненные", "done"),
+            ("Отмененные", "cancelled"),
+        ]
+    )
+    kind_title = REQUEST_KIND_FILTER_LABELS.get(kind_filter or "", "Все типы")
+    status_title = REQUEST_STATUS_FILTER_LABELS.get(status_filter or "", "Все статусы")
     rows = "".join(
         f"""
         <tr>
@@ -626,14 +675,13 @@ def render_requests_html(requests: list[RequestListItem], *, token: str = "") ->
         for request in requests
     ) or '<tr><td colspan="7" class="muted">Заявок пока нет.</td></tr>'
     body = f"""
-    <section>
-      <h2>Заявки</h2>
-      <table><thead><tr><th>Тип</th><th>ID</th><th>Статус</th><th>Telegram</th><th>Пользователь</th><th>Название</th><th>Создано</th></tr></thead><tbody>{rows}</tbody></table>
+    <section><h2>Заявки: {escape(kind_title)} · {escape(status_title)}</h2>
+      <div class="filters">{kind_filters}</div>
+      <div class="filters">{status_filters}</div>
+      <table><thead><tr><th>Тип</th><th>ID</th><th>Статус</th><th>ID Telegram</th><th>Пользователь</th><th>Название</th><th>Создано</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     """
     return _base_html("Заявки", body, token=token)
-
-
 
 
 def render_signal_detail_html(detail: SignalDetail, *, token: str = "") -> str:
@@ -863,9 +911,15 @@ async def users(_: Annotated[None, Depends(require_web_admin)], request: Request
 
 @app.get("/requests", response_class=HTMLResponse)
 async def requests(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    kind_filter = request.query_params.get("kind") or None
+    if kind_filter not in REQUEST_KIND_FILTER_LABELS:
+        kind_filter = None
+    status_filter = request.query_params.get("status") or None
+    if status_filter not in REQUEST_STATUS_FILTER_LABELS:
+        status_filter = None
     async with SessionFactory() as session:
-        rows = await collect_request_list(session)
-    return HTMLResponse(render_requests_html(rows, token=""))
+        rows = await collect_request_list(session, kind_filter=kind_filter, status_filter=status_filter)
+    return HTMLResponse(render_requests_html(rows, token="", kind_filter=kind_filter, status_filter=status_filter))
 
 
 @app.get("/maintenance", response_class=HTMLResponse)

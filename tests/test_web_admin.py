@@ -287,8 +287,14 @@ def test_render_requests_html_shows_subscription_and_analysis_items() -> None:
             )
         ],
         token="secret",
+        kind_filter="subscription",
+        status_filter="new",
     )
 
+    assert "Заявки: Подписки" in html
+    assert "Новые" in html
+    assert "/requests?kind=analysis&status=new" in html
+    assert "/requests?kind=subscription&status=done" in html
     assert "Подписка" in html
     assert "VIP &lt;99%&gt;" in html
     assert "@admin" in html

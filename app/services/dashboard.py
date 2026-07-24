@@ -581,13 +581,25 @@ async def collect_delivery_list(
     ]
 
 
-async def collect_request_list(session: AsyncSession, *, limit: int = 50) -> list[RequestListItem]:
-    subscription_rows = (
-        await session.scalars(select(SubscriptionRequest).order_by(desc(SubscriptionRequest.id)).limit(limit))
-    ).all()
-    analysis_rows = (
-        await session.scalars(select(MatchAnalysisRequest).order_by(desc(MatchAnalysisRequest.id)).limit(limit))
-    ).all()
+async def collect_request_list(
+    session: AsyncSession,
+    *,
+    kind_filter: str | None = None,
+    status_filter: str | None = None,
+    limit: int = 50,
+) -> list[RequestListItem]:
+    subscription_query = select(SubscriptionRequest).order_by(desc(SubscriptionRequest.id)).limit(limit)
+    analysis_query = select(MatchAnalysisRequest).order_by(desc(MatchAnalysisRequest.id)).limit(limit)
+    if status_filter:
+        subscription_query = subscription_query.where(SubscriptionRequest.status == status_filter)
+        analysis_query = analysis_query.where(MatchAnalysisRequest.status == status_filter)
+
+    subscription_rows = []
+    analysis_rows = []
+    if kind_filter in (None, "subscription"):
+        subscription_rows = (await session.scalars(subscription_query)).all()
+    if kind_filter in (None, "analysis"):
+        analysis_rows = (await session.scalars(analysis_query)).all()
 
     items = [
         RequestListItem(
