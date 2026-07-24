@@ -158,7 +158,7 @@ docker compose down
 
 ## Web Admin Dashboard
 
-The Docker Compose setup now includes a read-only web dashboard service on port `8000`. It uses HTTP Basic Auth credentials from `.env`; multiple admins are configured through `WEB_ADMIN_USERS`.
+The Docker Compose setup includes a web admin service on port `8000`. It uses HTTP Basic Auth credentials from `.env`; multiple admins are configured through `WEB_ADMIN_USERS`. The web admin can view data and perform operational actions: update request statuses, manage user access, edit payment/contact settings, fix signal results, view monitoring, and export CSV reports.
 
 Add admin credentials to `/opt/algobet/.env`:
 
@@ -181,13 +181,13 @@ Add the external port to `/opt/algobet/.env`:
 WEB_ADMIN_PORT=48291
 ```
 
-Open the dashboard:
+Open the web admin:
 
 ```text
 http://217.114.5.208:48291/
 ```
 
-Use one of the `WEB_ADMIN_USERS` login/password pairs from `/opt/algobet/.env` when the browser asks for credentials.
+Use one of the `WEB_ADMIN_USERS` login/password pairs from `/opt/algobet/.env` when the browser asks for credentials. Payment remains manual: users create requests, admins confirm payment and activate access in the admin panel.
 
 Useful checks:
 
