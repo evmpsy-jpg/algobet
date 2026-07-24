@@ -17,8 +17,9 @@ from app.database.models import (
     SubscriptionRequest,
     User,
     UserAccess,
+    WebAdminActionLog,
 )
-from app.services.dashboard import collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
+from app.services.dashboard import collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_monitoring_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
 
 
 @pytest.mark.asyncio
@@ -130,6 +131,13 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
                     match_text="Player 1 vs Player 2",
                     status="new",
                 ),
+                WebAdminActionLog(
+                    actor_username="admin",
+                    action="request_status_update",
+                    target_type="subscription_request",
+                    target_id="1",
+                    details={"old_status": "new", "new_status": "done"},
+                ),
             ]
         )
         await session.commit()
@@ -155,6 +163,7 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
         user_detail = await collect_user_detail(session, user.id)
         subscription_detail = await collect_request_detail(session, "subscription", 1)
         analysis_detail = await collect_request_detail(session, "analysis", 1)
+        monitoring = await collect_monitoring_summary(session)
 
     await engine.dispose()
 
@@ -219,6 +228,12 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert subscription_detail.item.kind == "subscription"
     assert analysis_detail is not None
     assert analysis_detail.item.kind == "analysis"
+    assert monitoring.dashboard.deliveries_by_status == {"failed": 1, "sent": 1}
+    assert len(monitoring.failed_deliveries) == 1
+    assert monitoring.failed_deliveries[0].error_text == "telegram unavailable"
+    assert [item.file_name for item in monitoring.recent_imports] == ["sample.xlsx"]
+    assert len(monitoring.recent_admin_actions) == 1
+    assert monitoring.recent_admin_actions[0].actor_username == "admin"
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,7 @@ from app.services.signal_results import AutoResultSummary, auto_update_signal_re
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
+    MonitoringSummary,
     QualityStatsItem,
     QualitySummary,
     RequestDetail,
@@ -45,6 +46,7 @@ from app.services.dashboard import (
     collect_dashboard_summary,
     collect_delivery_list,
     collect_maintenance_summary,
+    collect_monitoring_summary,
     collect_quality_summary,
     collect_request_detail,
     collect_request_list,
@@ -434,6 +436,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Сигналы", "/signals"),
             ("Доставки", "/deliveries"),
             ("Статистика", "/quality"),
+            ("Мониторинг", "/monitoring"),
             ("Пользователи", "/users"),
             ("Подписки", "/subscriptions"),
             ("Заявки", "/requests"),
@@ -1021,6 +1024,68 @@ def render_request_detail_html(detail: RequestDetail, *, token: str = "") -> str
     return _base_html(f"Заявка #{item.id}", body, token=token)
 
 
+def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> str:
+    dashboard = summary.dashboard
+    latest = dashboard.latest_import
+    latest_import_html = (
+        '<span class="muted">загрузок пока нет</span>'
+        if latest is None
+        else f'{escape(latest.file_name)} · {escape(_label(latest.status))} · {_fmt_dt(latest.finished_at or latest.created_at)}'
+    )
+    failed_rows = "".join(
+        f"""
+        <tr>
+          <td>#{delivery.id}</td>
+          <td><a href="{_token_href(f'/signals/{delivery.signal_id}', token)}">#{delivery.signal_id}</a></td>
+          <td>{delivery.telegram_id}</td>
+          <td>{escape(delivery.match_title)}</td>
+          <td>{_fmt_dt(delivery.sent_at or delivery.created_at)}</td>
+          <td>{escape((delivery.error_text or '-')[:220])}</td>
+        </tr>
+        """
+        for delivery in summary.failed_deliveries
+    ) or '<tr><td colspan="6" class="muted">Ошибок доставки нет.</td></tr>'
+    import_rows = "".join(
+        f"""
+        <tr>
+          <td>#{item.id}</td>
+          <td>{escape(item.file_name)}</td>
+          <td>{escape(_label(item.status))}</td>
+          <td>{item.parsed_matches} / {item.total_rows}</td>
+          <td>{item.inserted_matches} / {item.updated_matches} / {item.missing_matches}</td>
+          <td>{_fmt_dt(item.finished_at or item.created_at)}</td>
+          <td>{escape((item.error_text or '-')[:180])}</td>
+        </tr>
+        """
+        for item in summary.recent_imports
+    ) or '<tr><td colspan="7" class="muted">Загрузок пока нет.</td></tr>'
+    action_rows = "".join(
+        f"""
+        <tr>
+          <td>{_fmt_dt(log.created_at)}</td>
+          <td>{escape(log.actor_username)}</td>
+          <td>{escape(_label(log.action))}</td>
+          <td>{escape(_label(log.target_type))}</td>
+          <td>{escape(log.target_id or '-')}</td>
+        </tr>
+        """
+        for log in summary.recent_admin_actions
+    ) or '<tr><td colspan="5" class="muted">Действий пока нет.</td></tr>'
+    body = f"""
+    <div class="grid">
+      <div class="metric"><span>Очередь сигналов</span><strong>{dashboard.signals_by_status.get('scheduled', 0) + dashboard.signals_by_status.get('ready', 0)}</strong><div class="muted">готовых {dashboard.signals_by_status.get('ready', 0)}</div></div>
+      <div class="metric"><span>Ошибки доставки</span><strong>{dashboard.deliveries_by_status.get('failed', 0)}</strong><div class="muted">всего доставок {dashboard.deliveries_total}</div></div>
+      <div class="metric"><span>Открытые заявки</span><strong>{dashboard.open_subscription_requests + dashboard.open_analysis_requests}</strong><div class="muted">подписки {dashboard.open_subscription_requests}, анализ {dashboard.open_analysis_requests}</div></div>
+      <div class="metric"><span>Платные доступы</span><strong>{dashboard.access_paid_active}</strong><div class="muted">пробных {dashboard.access_trial_active}</div></div>
+    </div>
+    <section><h2>Последняя загрузка</h2><p>{latest_import_html}</p></section>
+    <section><h2>Последние ошибки доставки</h2><table><thead><tr><th>ID</th><th>Сигнал</th><th>ID Telegram</th><th>Матч</th><th>Время</th><th>Ошибка</th></tr></thead><tbody>{failed_rows}</tbody></table></section>
+    <section><h2>Последние загрузки Excel</h2><table><thead><tr><th>ID</th><th>Файл</th><th>Статус</th><th>Разобрано / строк</th><th>Добавлено / обновлено / пропущено</th><th>Время</th><th>Ошибка</th></tr></thead><tbody>{import_rows}</tbody></table></section>
+    <section><h2>Последние действия админов</h2><table><thead><tr><th>Время</th><th>Админ</th><th>Действие</th><th>Объект</th><th>ID</th></tr></thead><tbody>{action_rows}</tbody></table></section>
+    """
+    return _base_html("Мониторинг", body, token=token)
+
+
 def render_audit_html(logs: list[WebAdminActionLog], *, token: str = "") -> str:
     rows = "".join(
         f"""
@@ -1120,6 +1185,13 @@ def render_maintenance_html(summary: MaintenanceSummary, *, token: str = "") -> 
     </section>
     """
     return _base_html("Обслуживание", body, token=token)
+
+
+@app.get("/monitoring", response_class=HTMLResponse)
+async def monitoring(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    async with SessionFactory() as session:
+        summary = await collect_monitoring_summary(session)
+    return HTMLResponse(render_monitoring_html(summary, token=""))
 
 
 @app.get("/audit", response_class=HTMLResponse)

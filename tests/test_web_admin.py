@@ -13,11 +13,13 @@ from app.database.models import Base, Match, MatchAnalysisRequest, ScheduledSign
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
+    MonitoringSummary,
     QualityStatsItem,
     QualitySummary,
     LatestImportSummary,
     RecentSignalSummary,
     DeliveryListItem,
+    ImportListItem,
     RequestDetail,
     RequestListItem,
     SignalDetail,
@@ -34,6 +36,7 @@ from app.web_admin import (
     render_deliveries_csv,
     render_deliveries_html,
     render_maintenance_html,
+    render_monitoring_html,
     render_quality_html,
     render_request_detail_html,
     render_requests_csv,
@@ -464,6 +467,63 @@ def test_render_request_detail_html_shows_payment_and_contact() -> None:
     assert "@spec" in html
     assert 'action="/requests/subscription/7/status/done"' in html
     assert "Выполнена" in html
+
+
+def test_render_monitoring_html_shows_operational_summary() -> None:
+    dashboard = make_summary()
+    summary = MonitoringSummary(
+        dashboard=dashboard,
+        failed_deliveries=[
+            DeliveryListItem(
+                id=5,
+                signal_id=11,
+                status="failed",
+                telegram_id=315715137,
+                username="admin",
+                match_title="Player <One> - Player Two",
+                signal_group="vip",
+                sent_at=None,
+                created_at=datetime(2026, 7, 24, 11, 45),
+                error_text="telegram <unavailable>",
+            )
+        ],
+        recent_imports=[
+            ImportListItem(
+                id=2,
+                file_name="ЛЕТО.xlsx",
+                status="failed",
+                total_rows=10,
+                parsed_matches=8,
+                inserted_matches=7,
+                updated_matches=1,
+                missing_matches=2,
+                error_text="Excel error",
+                created_at=datetime(2026, 7, 24, 10, 0),
+                finished_at=datetime(2026, 7, 24, 10, 1),
+            )
+        ],
+        recent_admin_actions=[
+            WebAdminActionLog(
+                actor_username="admin",
+                action="settings_update",
+                target_type="settings",
+                target_id="analysis",
+                details={"section": "analysis"},
+                created_at=datetime(2026, 7, 24, 12, 0),
+            )
+        ],
+    )
+
+    html = render_monitoring_html(summary)
+
+    assert "Мониторинг" in html
+    assert "Очередь сигналов" in html
+    assert "Последние ошибки доставки" in html
+    assert "telegram &lt;unavailable&gt;" in html
+    assert "ЛЕТО.xlsx" in html
+    assert "Excel error" in html
+    assert "Изменение настроек" in html
+    assert "/monitoring" in html
 
 
 def test_render_audit_html_shows_action_rows() -> None:

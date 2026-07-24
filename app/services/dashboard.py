@@ -21,6 +21,7 @@ from app.database.models import (
     SubscriptionRequest,
     User,
     UserAccess,
+    WebAdminActionLog,
 )
 
 
@@ -200,6 +201,29 @@ class QualitySummary:
     overall: QualityStatsItem
     by_group: list[QualityStatsItem] = field(default_factory=list)
     by_level: list[QualityStatsItem] = field(default_factory=list)
+
+@dataclass(frozen=True)
+class ImportListItem:
+    id: int
+    file_name: str
+    status: str
+    total_rows: int
+    parsed_matches: int
+    inserted_matches: int
+    updated_matches: int
+    missing_matches: int
+    error_text: str | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+@dataclass(frozen=True)
+class MonitoringSummary:
+    dashboard: "DashboardSummary"
+    failed_deliveries: list[DeliveryListItem] = field(default_factory=list)
+    recent_imports: list[ImportListItem] = field(default_factory=list)
+    recent_admin_actions: list[WebAdminActionLog] = field(default_factory=list)
+
 
 @dataclass(frozen=True)
 class DashboardSummary:
@@ -460,6 +484,43 @@ async def collect_dashboard_summary(session: AsyncSession, *, recent_limit: int 
         analysis_requests_by_status=await _count_by(session, MatchAnalysisRequest.status),
         latest_import=latest_import_summary,
         recent_signals=recent_signals,
+    )
+
+
+async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10) -> MonitoringSummary:
+    dashboard = await collect_dashboard_summary(session, recent_limit=limit)
+    failed_deliveries = await collect_delivery_list(session, status_filter="failed", limit=limit)
+    import_rows = (
+        await session.scalars(select(ImportBatch).order_by(desc(ImportBatch.id)).limit(limit))
+    ).all()
+    recent_imports = [
+        ImportListItem(
+            id=item.id,
+            file_name=item.file_name,
+            status=item.status,
+            total_rows=item.total_rows,
+            parsed_matches=item.parsed_matches,
+            inserted_matches=item.inserted_matches,
+            updated_matches=item.updated_matches,
+            missing_matches=item.missing_matches,
+            error_text=item.error_text,
+            created_at=item.created_at,
+            finished_at=item.finished_at,
+        )
+        for item in import_rows
+    ]
+    recent_admin_actions = list(
+        (
+            await session.scalars(
+                select(WebAdminActionLog).order_by(desc(WebAdminActionLog.id)).limit(limit)
+            )
+        ).all()
+    )
+    return MonitoringSummary(
+        dashboard=dashboard,
+        failed_deliveries=failed_deliveries,
+        recent_imports=recent_imports,
+        recent_admin_actions=recent_admin_actions,
     )
 
 
