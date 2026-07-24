@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import SubscriptionRequest, User, UserAccess
+from app.services.subscriptions import SubscriptionPlan
 
 TRIAL_SIGNALS_LIMIT = 3
 VIP_PROBABILITY_MIN = 99
@@ -189,6 +190,69 @@ async def grant_paid_access(
     return access
 
 
+async def _get_or_create_access(session: AsyncSession, user: User) -> UserAccess:
+    access = await session.scalar(select(UserAccess).where(UserAccess.user_id == user.id))
+    if access is None:
+        access = UserAccess(user_id=user.id)
+        session.add(access)
+        await session.flush()
+    return access
+
+
+def _apply_paid_subscription_fields(
+    access: UserAccess,
+    *,
+    plan_id: str,
+    plan_group: str,
+    signals_limit: int | None,
+    duration_hours: int | None,
+    duration_days: int | None,
+    includes_vip: bool,
+    includes_all_signals: bool,
+    includes_analytics: bool,
+    now: datetime,
+) -> UserAccess:
+    active_until = None
+    if duration_hours:
+        active_until = now + timedelta(hours=duration_hours)
+    elif duration_days:
+        active_until = now + timedelta(days=duration_days)
+
+    access.access_type = "paid"
+    access.status = "active"
+    access.free_signals_remaining = 0
+    access.signals_remaining = signals_limit
+    access.plan_id = plan_id
+    access.plan_group = plan_group
+    access.includes_vip = bool(includes_vip)
+    access.includes_all_signals = bool(includes_all_signals)
+    access.includes_analytics = bool(includes_analytics)
+    access.active_until = active_until
+    return access
+
+
+async def grant_subscription_plan_access(
+    session: AsyncSession,
+    user: User,
+    plan: SubscriptionPlan,
+    *,
+    now: datetime | None = None,
+) -> UserAccess:
+    access = await _get_or_create_access(session, user)
+    return _apply_paid_subscription_fields(
+        access,
+        plan_id=plan.id,
+        plan_group=plan.group,
+        signals_limit=plan.signals_limit,
+        duration_hours=plan.duration_hours,
+        duration_days=plan.duration_days,
+        includes_vip=plan.includes_vip,
+        includes_all_signals=plan.includes_all_signals,
+        includes_analytics=plan.includes_analytics,
+        now=now or datetime.utcnow(),
+    )
+
+
 async def grant_subscription_access(
     session: AsyncSession,
     user: User,
@@ -196,29 +260,19 @@ async def grant_subscription_access(
     *,
     now: datetime | None = None,
 ) -> UserAccess:
-    access = await session.scalar(select(UserAccess).where(UserAccess.user_id == user.id))
-    if access is None:
-        access = UserAccess(user_id=user.id)
-        session.add(access)
-        await session.flush()
-    now = now or datetime.utcnow()
-    active_until = None
-    if request.duration_hours:
-        active_until = now + timedelta(hours=request.duration_hours)
-    elif request.duration_days:
-        active_until = now + timedelta(days=request.duration_days)
-
-    access.access_type = "paid"
-    access.status = "active"
-    access.free_signals_remaining = 0
-    access.signals_remaining = request.signals_limit
-    access.plan_id = request.plan_id
-    access.plan_group = request.plan_group
-    access.includes_vip = bool(request.includes_vip)
-    access.includes_all_signals = bool(request.includes_all_signals)
-    access.includes_analytics = bool(request.includes_analytics)
-    access.active_until = active_until
-    return access
+    access = await _get_or_create_access(session, user)
+    return _apply_paid_subscription_fields(
+        access,
+        plan_id=request.plan_id,
+        plan_group=request.plan_group,
+        signals_limit=request.signals_limit,
+        duration_hours=request.duration_hours,
+        duration_days=request.duration_days,
+        includes_vip=request.includes_vip,
+        includes_all_signals=request.includes_all_signals,
+        includes_analytics=request.includes_analytics,
+        now=now or datetime.utcnow(),
+    )
 
 
 async def disable_access(session: AsyncSession, user: User) -> UserAccess:

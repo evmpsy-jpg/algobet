@@ -43,6 +43,7 @@ from app.web_admin import (
     require_web_admin,
     update_web_request_status,
     update_web_signal_result,
+    update_web_user_access,
 )
 
 
@@ -372,6 +373,11 @@ def test_render_user_detail_html_shows_related_deliveries_and_requests() -> None
     html = render_user_detail_html(detail, token="secret")
 
     assert "Пользователь #1" in html
+    assert "Управление доступом" in html
+    assert "/users/1/access/trial" in html
+    assert "/users/1/access/disable" in html
+    assert "/users/1/access/plan/vip_10" in html
+    assert "VIP 99% · 10 сигналов · 2 500р" in html
     assert "Match &lt;A&gt;" in html
     assert "/requests/analysis/4" in html
 
@@ -493,6 +499,56 @@ async def test_update_web_subscription_status_grants_access() -> None:
     assert access.plan_id == "vip_10"
     assert access.signals_remaining == 10
     assert access.includes_vip is True
+
+
+@pytest.mark.asyncio
+async def test_update_web_user_access_grants_selected_plan() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        user = User(telegram_id=779, username="vip", first_name="Vip", last_name=None)
+        session.add(user)
+        await session.commit()
+
+        updated = await update_web_user_access(session, user.id, "plan", plan_id="included_48h")
+
+        access = await session.scalar(select(UserAccess).where(UserAccess.user_id == user.id))
+
+    await engine.dispose()
+
+    assert updated is True
+    assert access is not None
+    assert access.access_type == "paid"
+    assert access.status == "active"
+    assert access.plan_id == "included_48h"
+    assert access.plan_group == "included"
+    assert access.signals_remaining is None
+    assert access.includes_vip is True
+    assert access.includes_all_signals is True
+    assert access.includes_analytics is True
+    assert access.active_until is not None
+
+
+@pytest.mark.asyncio
+async def test_update_web_user_access_can_disable_access() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        user = User(telegram_id=780, username="disabled", first_name="Disabled", last_name=None)
+        session.add(user)
+        await session.flush()
+        session.add(UserAccess(user_id=user.id, access_type="paid", status="active", signals_remaining=10, includes_vip=True))
+        await session.commit()
+
+        updated = await update_web_user_access(session, user.id, "disable")
+
+        access = await session.scalar(select(UserAccess).where(UserAccess.user_id == user.id))
+
+    await engine.dispose()
+
+    assert updated is True
+    assert access is not None
+    assert access.status == "disabled"
+    assert access.signals_remaining is None
+    assert access.free_signals_remaining == 0
 
 
 @pytest.mark.asyncio

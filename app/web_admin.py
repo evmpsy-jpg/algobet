@@ -15,8 +15,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.database.models import MatchAnalysisRequest, ScheduledSignal, SubscriptionRequest, User
 from app.database.session import SessionFactory, init_db
-from app.services.access import grant_subscription_access
+from app.services.access import disable_access, grant_subscription_access, grant_subscription_plan_access, grant_trial_access
 from app.services.signal_sender import process_delivery_now
+from app.services.subscriptions import SUBSCRIPTION_PLANS, format_price, get_subscription_plan
 from app.services.signal_results import AutoResultSummary, auto_update_signal_results, format_winrate, set_signal_result
 from app.services.dashboard import (
     DashboardSummary,
@@ -217,6 +218,20 @@ def _request_status_buttons(kind: str, request_id: int, current_status: str) -> 
     return "".join(buttons)
 
 
+def _user_access_buttons(user_id: int) -> str:
+    quick_actions = "".join([
+        f'<form method="post" action="/users/{user_id}/access/trial"><button class="action-button" type="submit">Выдать пробный доступ</button></form>',
+        f'<form method="post" action="/users/{user_id}/access/disable"><button class="action-button danger" type="submit">Отключить доступ</button></form>',
+    ])
+    plan_actions = "".join(
+        f'<form method="post" action="/users/{user_id}/access/plan/{escape(plan.id)}">'
+        f'<button class="action-button" type="submit">{escape(plan.title)} · {escape(plan.description)} · {escape(format_price(plan.price_rub))}</button>'
+        "</form>"
+        for plan in SUBSCRIPTION_PLANS
+    )
+    return f'<div class="actions">{quick_actions}</div><div class="actions">{plan_actions}</div>'
+
+
 async def update_web_signal_result(session, signal_id: int, new_status: str) -> bool:
     if new_status not in SIGNAL_RESULT_WEB_STATUSES:
         raise ValueError("Unknown signal result status")
@@ -253,6 +268,30 @@ async def update_web_request_status(session, kind: str, request_id: int, new_sta
         await session.commit()
         return True
     raise ValueError("Unknown request kind")
+
+
+async def update_web_user_access(session, user_id: int, action: str, plan_id: str | None = None) -> bool:
+    user = await session.get(User, user_id)
+    if user is None:
+        return False
+
+    if action == "trial":
+        await grant_trial_access(session, user)
+    elif action == "disable":
+        await disable_access(session, user)
+    elif action == "plan":
+        if plan_id is None:
+            raise ValueError("Subscription plan is required")
+        plan = get_subscription_plan(plan_id)
+        if plan is None:
+            raise ValueError("Unknown subscription plan")
+        await grant_subscription_plan_access(session, user, plan)
+    else:
+        raise ValueError("Unknown user access action")
+
+    user.updated_at = datetime.utcnow()
+    await session.commit()
+    return True
 
 
 def _fmt_counts(counts: dict[str, int]) -> str:
@@ -763,6 +802,7 @@ def render_user_detail_html(detail: UserDetail, *, token: str = "") -> str:
         <dt>Доставки</dt><dd>{item.sent_deliveries} отправлено / {item.failed_deliveries} ошибок</dd>
       </dl>
     </section>
+    <section><h2>Управление доступом</h2>{_user_access_buttons(item.id)}</section>
     <section><h2>Последние доставки</h2><table><thead><tr><th>ID</th><th>Сигнал</th><th>Статус</th><th>Группа</th><th>Матч</th><th>Отправлено</th><th>Ошибка</th></tr></thead><tbody>{delivery_rows}</tbody></table></section>
     <section><h2>Заявки</h2><table><thead><tr><th>Тип</th><th>ID</th><th>Статус</th><th>Название</th><th>Создано</th></tr></thead><tbody>{request_rows}</tbody></table></section>
     """
@@ -992,6 +1032,38 @@ async def user_detail(user_id: int, _: Annotated[None, Depends(require_web_admin
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return HTMLResponse(render_user_detail_html(detail, token=""))
+
+
+@app.post("/users/{user_id}/access/plan/{plan_id}")
+async def user_access_plan_update(
+    user_id: int,
+    plan_id: str,
+    _: Annotated[None, Depends(require_web_admin)],
+) -> RedirectResponse:
+    try:
+        async with SessionFactory() as session:
+            updated = await update_web_user_access(session, user_id, "plan", plan_id=plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return RedirectResponse(url=f"/users/{user_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/users/{user_id}/access/{action}")
+async def user_access_update(
+    user_id: int,
+    action: str,
+    _: Annotated[None, Depends(require_web_admin)],
+) -> RedirectResponse:
+    try:
+        async with SessionFactory() as session:
+            updated = await update_web_user_access(session, user_id, action)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return RedirectResponse(url=f"/users/{user_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/requests/{kind}/{request_id}", response_class=HTMLResponse)
