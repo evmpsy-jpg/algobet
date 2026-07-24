@@ -157,13 +157,13 @@ REQUEST_STATUS_FILTER_LABELS = {
 }
 
 
-def _requests_path(kind_filter: str | None = None, status_filter: str | None = None) -> str:
+def _requests_path(kind_filter: str | None = None, status_filter: str | None = None, *, base: str = "/requests") -> str:
     params = []
     if kind_filter:
         params.append(f"kind={kind_filter}")
     if status_filter:
         params.append(f"status={status_filter}")
-    return "/requests" + ("?" + "&".join(params) if params else "")
+    return base + ("?" + "&".join(params) if params else "")
 
 
 SIGNAL_RESULT_WEB_STATUSES = ("won", "lost", "void", "unknown")
@@ -677,11 +677,28 @@ def render_requests_html(
     body = f"""
     <section><h2>Заявки: {escape(kind_title)} · {escape(status_title)}</h2>
       <div class="filters">{kind_filters}</div>
-      <div class="filters">{status_filters}</div>
+      <div class="filters">{status_filters}<a class="button" href="{_token_href(_requests_path(kind_filter, status_filter, base='/requests/export.csv'), token)}">CSV</a></div>
       <table><thead><tr><th>Тип</th><th>ID</th><th>Статус</th><th>ID Telegram</th><th>Пользователь</th><th>Название</th><th>Создано</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     """
     return _base_html("Заявки", body, token=token)
+
+
+def render_requests_csv(requests: list[RequestListItem]) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["kind", "id", "status", "telegram_id", "username", "title", "created_at"])
+    for request in requests:
+        writer.writerow([
+            request.kind,
+            request.id,
+            request.status,
+            request.telegram_id,
+            request.username or "",
+            request.title,
+            _fmt_dt(request.created_at),
+        ])
+    return output.getvalue()
 
 
 def render_signal_detail_html(detail: SignalDetail, *, token: str = "") -> str:
@@ -920,6 +937,24 @@ async def requests(_: Annotated[None, Depends(require_web_admin)], request: Requ
     async with SessionFactory() as session:
         rows = await collect_request_list(session, kind_filter=kind_filter, status_filter=status_filter)
     return HTMLResponse(render_requests_html(rows, token="", kind_filter=kind_filter, status_filter=status_filter))
+
+
+@app.get("/requests/export.csv")
+async def requests_export(_: Annotated[None, Depends(require_web_admin)], request: Request) -> Response:
+    kind_filter = request.query_params.get("kind") or None
+    if kind_filter not in REQUEST_KIND_FILTER_LABELS:
+        kind_filter = None
+    status_filter = request.query_params.get("status") or None
+    if status_filter not in REQUEST_STATUS_FILTER_LABELS:
+        status_filter = None
+    async with SessionFactory() as session:
+        rows = await collect_request_list(session, kind_filter=kind_filter, status_filter=status_filter, limit=10000)
+    content = render_requests_csv(rows)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=algobet-requests.csv"},
+    )
 
 
 @app.get("/maintenance", response_class=HTMLResponse)

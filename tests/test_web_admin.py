@@ -33,6 +33,7 @@ from app.web_admin import (
     render_maintenance_html,
     render_quality_html,
     render_request_detail_html,
+    render_requests_csv,
     render_requests_html,
     render_signal_detail_html,
     render_signals_csv,
@@ -295,11 +296,30 @@ def test_render_requests_html_shows_subscription_and_analysis_items() -> None:
     assert "Новые" in html
     assert "/requests?kind=analysis&status=new" in html
     assert "/requests?kind=subscription&status=done" in html
+    assert "/requests/export.csv?kind=subscription&status=new" in html
     assert "Подписка" in html
     assert "VIP &lt;99%&gt;" in html
     assert "@admin" in html
     assert "/requests/subscription/7" in html
 
+
+def test_render_requests_csv_exports_rows() -> None:
+    csv_text = render_requests_csv(
+        [
+            RequestListItem(
+                kind="subscription",
+                id=7,
+                status="new",
+                telegram_id=315715137,
+                username="admin",
+                title="VIP <99%>",
+                created_at=datetime(2026, 7, 24, 11, 0),
+            )
+        ]
+    )
+
+    assert csv_text.splitlines()[0] == "kind,id,status,telegram_id,username,title,created_at"
+    assert "subscription,7,new,315715137,admin,VIP <99%>,24.07.2026 11:00" in csv_text
 
 def test_render_signal_detail_html_shows_message_deliveries_and_trace() -> None:
     signal = make_signal()
