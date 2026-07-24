@@ -188,13 +188,13 @@ ACCESS_STATUS_FILTER_LABELS = {
 }
 
 
-def _subscriptions_path(access_type_filter: str | None = None, access_status_filter: str | None = None) -> str:
+def _subscriptions_path(access_type_filter: str | None = None, access_status_filter: str | None = None, *, base: str = "/subscriptions") -> str:
     params = []
     if access_type_filter:
         params.append(f"type={access_type_filter}")
     if access_status_filter:
         params.append(f"status={access_status_filter}")
-    return "/subscriptions" + ("?" + "&".join(params) if params else "")
+    return base + ("?" + "&".join(params) if params else "")
 
 
 SIGNAL_RESULT_WEB_STATUSES = ("won", "lost", "void", "unknown")
@@ -742,12 +742,45 @@ def render_subscriptions_html(
     body = f"""
     <section><h2>Подписки: {escape(type_title)} · {escape(status_title)}</h2>
       <div class="filters">{type_filters}</div>
-      <div class="filters">{status_filters}</div>
+      <div class="filters">{status_filters}<a class="button" href="{_token_href(_subscriptions_path(access_type_filter, access_status_filter, base='/subscriptions/export.csv'), token)}">CSV</a></div>
       <table><thead><tr><th>ID</th><th>ID Telegram</th><th>Имя</th><th>Тип</th><th>Статус</th><th>Платных</th><th>Пробных</th><th>До</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     """
     return _base_html("Подписки", body, token=token)
 
+
+def render_subscriptions_csv(users: list[UserListItem]) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "id",
+        "telegram_id",
+        "username",
+        "name",
+        "access_type",
+        "access_status",
+        "signals_remaining",
+        "free_signals_remaining",
+        "active_until",
+        "sent_deliveries",
+        "failed_deliveries",
+    ])
+    for user in users:
+        full_name = " ".join(part for part in [user.first_name, user.last_name] if part)
+        writer.writerow([
+            user.id,
+            user.telegram_id,
+            user.username or "",
+            full_name,
+            user.access_type or "",
+            user.access_status or "",
+            user.signals_remaining if user.signals_remaining is not None else "",
+            user.free_signals_remaining if user.free_signals_remaining is not None else "",
+            _fmt_dt(user.active_until),
+            user.sent_deliveries,
+            user.failed_deliveries,
+        ])
+    return output.getvalue()
 
 def render_requests_html(
     requests: list[RequestListItem],
@@ -1147,6 +1180,28 @@ async def subscriptions(_: Annotated[None, Depends(require_web_admin)], request:
         )
     )
 
+
+@app.get("/subscriptions/export.csv")
+async def subscriptions_export(_: Annotated[None, Depends(require_web_admin)], request: Request) -> Response:
+    access_type_filter = request.query_params.get("type") or None
+    if access_type_filter not in ACCESS_TYPE_FILTER_LABELS:
+        access_type_filter = None
+    access_status_filter = request.query_params.get("status") or None
+    if access_status_filter not in ACCESS_STATUS_FILTER_LABELS:
+        access_status_filter = None
+    async with SessionFactory() as session:
+        rows = await collect_user_list(
+            session,
+            access_type_filter=access_type_filter,
+            access_status_filter=access_status_filter,
+            limit=10000,
+        )
+    content = render_subscriptions_csv(rows)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=algobet-subscriptions.csv"},
+    )
 
 @app.get("/requests", response_class=HTMLResponse)
 async def requests(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
