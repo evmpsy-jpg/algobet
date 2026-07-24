@@ -21,6 +21,7 @@ def admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="🔎 Заявки на анализ")],
             [KeyboardButton(text="💳 Заявки на подписку")],
             [KeyboardButton(text="📋 Последняя загрузка"), KeyboardButton(text="⚙️ Настройки")],
+            [KeyboardButton(text="🛠 Обслуживание")],
             [KeyboardButton(text="⬅️ Главное меню")],
         ],
         resize_keyboard=True,

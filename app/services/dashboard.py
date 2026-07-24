@@ -1,0 +1,640 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.sqlite_backup import latest_sqlite_backup, sqlite_database_path
+from app.database.models import (
+    ImportBatch,
+    Match,
+    MatchAnalysisRequest,
+    ScheduledSignal,
+    SignalDelivery,
+    SignalResult,
+    SignalDecisionLog,
+    SubscriptionRequest,
+    User,
+    UserAccess,
+)
+
+
+
+
+@dataclass(frozen=True)
+class MaintenanceSummary:
+    database_path: str | None
+    database_size_bytes: int
+    data_size_bytes: int
+    uploads_size_bytes: int
+    latest_backup_path: str | None
+    latest_backup_size_bytes: int | None
+    latest_backup_created_at: datetime | None
+    sqlite_backup_enabled: bool
+    sqlite_backup_interval_hours: int
+    sqlite_backup_keep: int
+
+@dataclass(frozen=True)
+class LatestImportSummary:
+    id: int
+    file_name: str
+    status: str
+    parsed_matches: int
+    inserted_matches: int
+    updated_matches: int
+    missing_matches: int
+    created_at: datetime
+    finished_at: datetime | None
+
+
+@dataclass(frozen=True)
+class RecentSignalSummary:
+    id: int
+    status: str
+    send_at: datetime
+    signal_group: str
+    level: str | None
+    side: int | None
+    player_1: str
+    player_2: str
+    result_status: str | None
+
+
+@dataclass(frozen=True)
+class SignalListItem:
+    id: int
+    status: str
+    send_at: datetime
+    signal_group: str
+    level: str | None
+    side: int | None
+    player_1: str
+    player_2: str
+    result_status: str | None
+    sent_deliveries: int = 0
+    failed_deliveries: int = 0
+
+
+@dataclass(frozen=True)
+class UserListItem:
+    id: int
+    telegram_id: int
+    username: str | None
+    first_name: str | None
+    last_name: str | None
+    is_active: bool
+    access_type: str | None
+    access_status: str | None
+    free_signals_remaining: int | None
+    signals_remaining: int | None
+    active_until: datetime | None
+    sent_deliveries: int = 0
+    failed_deliveries: int = 0
+
+
+@dataclass(frozen=True)
+class RequestListItem:
+    kind: str
+    id: int
+    status: str
+    telegram_id: int
+    username: str | None
+    title: str
+    created_at: datetime
+
+
+
+@dataclass(frozen=True)
+class SignalDeliveryListItem:
+    id: int
+    status: str
+    telegram_id: int
+    username: str | None
+    error_text: str | None
+    sent_at: datetime | None
+
+
+@dataclass(frozen=True)
+class SignalDetail:
+    item: SignalListItem
+    external_match_id: int
+    external_tournament_id: int
+    source_url: str
+    match_start_at: datetime
+    match_time: str
+    tournament_date: str
+    message_text: str | None
+    cancel_reason: str | None
+    decision_reason: str | None
+    decision_trace: list[dict]
+    deliveries: list[SignalDeliveryListItem]
+
+
+@dataclass(frozen=True)
+class UserDeliveryListItem:
+    id: int
+    signal_id: int
+    status: str
+    match_title: str
+    signal_group: str
+    sent_at: datetime | None
+    error_text: str | None
+
+
+@dataclass(frozen=True)
+class UserDetail:
+    item: UserListItem
+    deliveries: list[UserDeliveryListItem]
+    requests: list[RequestListItem]
+
+
+@dataclass(frozen=True)
+class RequestDetail:
+    item: RequestListItem
+    payment_details: str | None
+    specialist_contact: str | None
+    description: str
+    updated_at: datetime
+
+@dataclass(frozen=True)
+class DashboardSummary:
+    users_total: int = 0
+    users_active: int = 0
+    access_trial_active: int = 0
+    access_paid_active: int = 0
+    matches_total: int = 0
+    matches_active: int = 0
+    imports_total: int = 0
+    signals_by_status: dict[str, int] = field(default_factory=dict)
+    deliveries_by_status: dict[str, int] = field(default_factory=dict)
+    results_by_status: dict[str, int] = field(default_factory=dict)
+    subscription_requests_by_status: dict[str, int] = field(default_factory=dict)
+    analysis_requests_by_status: dict[str, int] = field(default_factory=dict)
+    latest_import: LatestImportSummary | None = None
+    recent_signals: list[RecentSignalSummary] = field(default_factory=list)
+
+    @property
+    def signals_total(self) -> int:
+        return sum(self.signals_by_status.values())
+
+    @property
+    def deliveries_total(self) -> int:
+        return sum(self.deliveries_by_status.values())
+
+    @property
+    def open_subscription_requests(self) -> int:
+        return self.subscription_requests_by_status.get("new", 0)
+
+    @property
+    def open_analysis_requests(self) -> int:
+        return self.analysis_requests_by_status.get("new", 0)
+
+
+async def _count(session: AsyncSession, query) -> int:
+    return int(await session.scalar(query) or 0)
+
+
+async def _count_by(session: AsyncSession, column) -> dict[str, int]:
+    rows = (await session.execute(select(column, func.count()).group_by(column))).all()
+    return {str(key or "unknown"): int(value or 0) for key, value in rows}
+
+
+async def _delivery_counts_by_signal(session: AsyncSession, signal_ids: list[int]) -> dict[int, dict[str, int]]:
+    if not signal_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(SignalDelivery.signal_id, SignalDelivery.status, func.count(SignalDelivery.id))
+            .where(SignalDelivery.signal_id.in_(signal_ids))
+            .group_by(SignalDelivery.signal_id, SignalDelivery.status)
+        )
+    ).all()
+    counts: dict[int, dict[str, int]] = {}
+    for signal_id, status, value in rows:
+        counts.setdefault(int(signal_id), {})[str(status or "unknown")] = int(value or 0)
+    return counts
+
+
+async def _delivery_counts_by_user(session: AsyncSession, user_ids: list[int]) -> dict[int, dict[str, int]]:
+    if not user_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(SignalDelivery.user_id, SignalDelivery.status, func.count(SignalDelivery.id))
+            .where(SignalDelivery.user_id.in_(user_ids))
+            .group_by(SignalDelivery.user_id, SignalDelivery.status)
+        )
+    ).all()
+    counts: dict[int, dict[str, int]] = {}
+    for user_id, status, value in rows:
+        counts.setdefault(int(user_id), {})[str(status or "unknown")] = int(value or 0)
+    return counts
+
+
+def directory_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            total += item.stat().st_size
+    return total
+
+
+def collect_maintenance_summary(settings: Any) -> MaintenanceSummary:
+    database_path = sqlite_database_path(settings.database_url)
+    latest_backup = latest_sqlite_backup(settings.data_dir)
+    return MaintenanceSummary(
+        database_path=str(database_path) if database_path is not None else None,
+        database_size_bytes=database_path.stat().st_size if database_path is not None and database_path.exists() else 0,
+        data_size_bytes=directory_size_bytes(settings.data_dir),
+        uploads_size_bytes=directory_size_bytes(settings.uploads_dir),
+        latest_backup_path=str(latest_backup.path) if latest_backup is not None else None,
+        latest_backup_size_bytes=latest_backup.size_bytes if latest_backup is not None else None,
+        latest_backup_created_at=latest_backup.created_at if latest_backup is not None else None,
+        sqlite_backup_enabled=bool(settings.sqlite_backup_enabled),
+        sqlite_backup_interval_hours=int(settings.sqlite_backup_interval_hours),
+        sqlite_backup_keep=int(settings.sqlite_backup_keep),
+    )
+
+
+async def collect_dashboard_summary(session: AsyncSession, *, recent_limit: int = 8) -> DashboardSummary:
+    latest_import = await session.scalar(select(ImportBatch).order_by(desc(ImportBatch.id)).limit(1))
+    latest_import_summary = None
+    if latest_import is not None:
+        latest_import_summary = LatestImportSummary(
+            id=latest_import.id,
+            file_name=latest_import.file_name,
+            status=latest_import.status,
+            parsed_matches=latest_import.parsed_matches,
+            inserted_matches=latest_import.inserted_matches,
+            updated_matches=latest_import.updated_matches,
+            missing_matches=latest_import.missing_matches,
+            created_at=latest_import.created_at,
+            finished_at=latest_import.finished_at,
+        )
+
+    recent_rows = (
+        await session.execute(
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .order_by(desc(ScheduledSignal.id))
+            .limit(recent_limit)
+        )
+    ).all()
+    recent_signals = [
+        RecentSignalSummary(
+            id=signal.id,
+            status=signal.status,
+            send_at=signal.send_at,
+            signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
+            level=(signal.signal_payload or {}).get("level"),
+            side=(signal.signal_payload or {}).get("side"),
+            player_1=match.player_1,
+            player_2=match.player_2,
+            result_status=result.status if result is not None else None,
+        )
+        for signal, match, result in recent_rows
+    ]
+
+    return DashboardSummary(
+        users_total=await _count(session, select(func.count(User.id))),
+        users_active=await _count(session, select(func.count(User.id)).where(User.is_active.is_(True))),
+        access_trial_active=await _count(
+            session,
+            select(func.count(UserAccess.id)).where(
+                UserAccess.status == "active",
+                UserAccess.access_type == "trial",
+            ),
+        ),
+        access_paid_active=await _count(
+            session,
+            select(func.count(UserAccess.id)).where(
+                UserAccess.status == "active",
+                UserAccess.access_type == "paid",
+            ),
+        ),
+        matches_total=await _count(session, select(func.count(Match.id))),
+        matches_active=await _count(
+            session,
+            select(func.count(Match.id)).where(Match.is_present_in_latest_import.is_(True)),
+        ),
+        imports_total=await _count(session, select(func.count(ImportBatch.id))),
+        signals_by_status=await _count_by(session, ScheduledSignal.status),
+        deliveries_by_status=await _count_by(session, SignalDelivery.status),
+        results_by_status=await _count_by(session, SignalResult.status),
+        subscription_requests_by_status=await _count_by(session, SubscriptionRequest.status),
+        analysis_requests_by_status=await _count_by(session, MatchAnalysisRequest.status),
+        latest_import=latest_import_summary,
+        recent_signals=recent_signals,
+    )
+
+
+async def collect_signal_list(
+    session: AsyncSession,
+    *,
+    status_filter: str | None = None,
+    limit: int = 50,
+) -> list[SignalListItem]:
+    query = (
+        select(ScheduledSignal, Match, SignalResult)
+        .join(Match, Match.id == ScheduledSignal.match_id)
+        .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+        .order_by(desc(ScheduledSignal.id))
+        .limit(limit)
+    )
+    if status_filter:
+        query = query.where(ScheduledSignal.status == status_filter)
+    rows = (await session.execute(query)).all()
+    signal_ids = [signal.id for signal, _, _ in rows]
+    delivery_counts = await _delivery_counts_by_signal(session, signal_ids)
+
+    return [
+        SignalListItem(
+            id=signal.id,
+            status=signal.status,
+            send_at=signal.send_at,
+            signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
+            level=(signal.signal_payload or {}).get("level"),
+            side=(signal.signal_payload or {}).get("side"),
+            player_1=match.player_1,
+            player_2=match.player_2,
+            result_status=result.status if result is not None else None,
+            sent_deliveries=delivery_counts.get(signal.id, {}).get("sent", 0),
+            failed_deliveries=delivery_counts.get(signal.id, {}).get("failed", 0),
+        )
+        for signal, match, result in rows
+    ]
+
+
+async def collect_user_list(session: AsyncSession, *, limit: int = 50) -> list[UserListItem]:
+    rows = (
+        await session.execute(
+            select(User, UserAccess)
+            .outerjoin(UserAccess, UserAccess.user_id == User.id)
+            .order_by(desc(User.id))
+            .limit(limit)
+        )
+    ).all()
+    user_ids = [user.id for user, _ in rows]
+    delivery_counts = await _delivery_counts_by_user(session, user_ids)
+
+    return [
+        UserListItem(
+            id=user.id,
+            telegram_id=user.telegram_id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            is_active=user.is_active,
+            access_type=access.access_type if access is not None else None,
+            access_status=access.status if access is not None else None,
+            free_signals_remaining=access.free_signals_remaining if access is not None else None,
+            signals_remaining=access.signals_remaining if access is not None else None,
+            active_until=access.active_until if access is not None else None,
+            sent_deliveries=delivery_counts.get(user.id, {}).get("sent", 0),
+            failed_deliveries=delivery_counts.get(user.id, {}).get("failed", 0),
+        )
+        for user, access in rows
+    ]
+
+
+async def collect_request_list(session: AsyncSession, *, limit: int = 50) -> list[RequestListItem]:
+    subscription_rows = (
+        await session.scalars(select(SubscriptionRequest).order_by(desc(SubscriptionRequest.id)).limit(limit))
+    ).all()
+    analysis_rows = (
+        await session.scalars(select(MatchAnalysisRequest).order_by(desc(MatchAnalysisRequest.id)).limit(limit))
+    ).all()
+
+    items = [
+        RequestListItem(
+            kind="subscription",
+            id=request.id,
+            status=request.status,
+            telegram_id=request.telegram_id,
+            username=request.username,
+            title=f"{request.plan_title} / {request.plan_description}",
+            created_at=request.created_at,
+        )
+        for request in subscription_rows
+    ]
+    items.extend(
+        RequestListItem(
+            kind="analysis",
+            id=request.id,
+            status=request.status,
+            telegram_id=request.telegram_id,
+            username=request.username,
+            title=request.match_text,
+            created_at=request.created_at,
+        )
+        for request in analysis_rows
+    )
+    return sorted(items, key=lambda item: item.created_at, reverse=True)[:limit]
+
+async def collect_signal_detail(session: AsyncSession, signal_id: int) -> SignalDetail | None:
+    row = (
+        await session.execute(
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.id == signal_id)
+        )
+    ).first()
+    if row is None:
+        return None
+
+    signal, match, result = row
+    delivery_counts = await _delivery_counts_by_signal(session, [signal.id])
+    item = SignalListItem(
+        id=signal.id,
+        status=signal.status,
+        send_at=signal.send_at,
+        signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
+        level=(signal.signal_payload or {}).get("level"),
+        side=(signal.signal_payload or {}).get("side"),
+        player_1=match.player_1,
+        player_2=match.player_2,
+        result_status=result.status if result is not None else None,
+        sent_deliveries=delivery_counts.get(signal.id, {}).get("sent", 0),
+        failed_deliveries=delivery_counts.get(signal.id, {}).get("failed", 0),
+    )
+    delivery_rows = (
+        await session.execute(
+            select(SignalDelivery, User)
+            .outerjoin(User, User.id == SignalDelivery.user_id)
+            .where(SignalDelivery.signal_id == signal.id)
+            .order_by(desc(SignalDelivery.id))
+        )
+    ).all()
+    deliveries = [
+        SignalDeliveryListItem(
+            id=delivery.id,
+            status=delivery.status,
+            telegram_id=delivery.telegram_id,
+            username=user.username if user is not None else None,
+            error_text=delivery.error_text,
+            sent_at=delivery.sent_at,
+        )
+        for delivery, user in delivery_rows
+    ]
+    decision = await session.scalar(
+        select(SignalDecisionLog)
+        .where(SignalDecisionLog.match_id == match.id)
+        .order_by(desc(SignalDecisionLog.id))
+        .limit(1)
+    )
+    return SignalDetail(
+        item=item,
+        external_match_id=match.external_match_id,
+        external_tournament_id=match.external_tournament_id,
+        source_url=match.source_url,
+        match_start_at=match.match_start_at,
+        match_time=match.match_time,
+        tournament_date=match.tournament_date,
+        message_text=signal.message_text,
+        cancel_reason=signal.cancel_reason,
+        decision_reason=decision.reason if decision is not None else None,
+        decision_trace=decision.decision_trace if decision is not None else [],
+        deliveries=deliveries,
+    )
+
+
+async def collect_user_detail(session: AsyncSession, user_id: int) -> UserDetail | None:
+    row = (
+        await session.execute(
+            select(User, UserAccess)
+            .outerjoin(UserAccess, UserAccess.user_id == User.id)
+            .where(User.id == user_id)
+        )
+    ).first()
+    if row is None:
+        return None
+
+    user, access = row
+    delivery_counts = await _delivery_counts_by_user(session, [user.id])
+    item = UserListItem(
+        id=user.id,
+        telegram_id=user.telegram_id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        is_active=user.is_active,
+        access_type=access.access_type if access is not None else None,
+        access_status=access.status if access is not None else None,
+        free_signals_remaining=access.free_signals_remaining if access is not None else None,
+        signals_remaining=access.signals_remaining if access is not None else None,
+        active_until=access.active_until if access is not None else None,
+        sent_deliveries=delivery_counts.get(user.id, {}).get("sent", 0),
+        failed_deliveries=delivery_counts.get(user.id, {}).get("failed", 0),
+    )
+    delivery_rows = (
+        await session.execute(
+            select(SignalDelivery, ScheduledSignal, Match)
+            .join(ScheduledSignal, ScheduledSignal.id == SignalDelivery.signal_id)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .where(SignalDelivery.user_id == user.id)
+            .order_by(desc(SignalDelivery.id))
+            .limit(20)
+        )
+    ).all()
+    deliveries = [
+        UserDeliveryListItem(
+            id=delivery.id,
+            signal_id=signal.id,
+            status=delivery.status,
+            match_title=f"{match.player_1} - {match.player_2}",
+            signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
+            sent_at=delivery.sent_at,
+            error_text=delivery.error_text,
+        )
+        for delivery, signal, match in delivery_rows
+    ]
+    subscriptions = (
+        await session.scalars(
+            select(SubscriptionRequest).where(SubscriptionRequest.user_id == user.id).order_by(desc(SubscriptionRequest.id)).limit(10)
+        )
+    ).all()
+    analyses = (
+        await session.scalars(
+            select(MatchAnalysisRequest).where(MatchAnalysisRequest.user_id == user.id).order_by(desc(MatchAnalysisRequest.id)).limit(10)
+        )
+    ).all()
+    requests = [
+        RequestListItem(
+            kind="subscription",
+            id=request.id,
+            status=request.status,
+            telegram_id=request.telegram_id,
+            username=request.username,
+            title=f"{request.plan_title} / {request.plan_description}",
+            created_at=request.created_at,
+        )
+        for request in subscriptions
+    ]
+    requests.extend(
+        RequestListItem(
+            kind="analysis",
+            id=request.id,
+            status=request.status,
+            telegram_id=request.telegram_id,
+            username=request.username,
+            title=request.match_text,
+            created_at=request.created_at,
+        )
+        for request in analyses
+    )
+    return UserDetail(item=item, deliveries=deliveries, requests=sorted(requests, key=lambda value: value.created_at, reverse=True))
+
+
+async def collect_request_detail(session: AsyncSession, kind: str, request_id: int) -> RequestDetail | None:
+    if kind == "subscription":
+        request = await session.get(SubscriptionRequest, request_id)
+        if request is None:
+            return None
+        item = RequestListItem(
+            kind="subscription",
+            id=request.id,
+            status=request.status,
+            telegram_id=request.telegram_id,
+            username=request.username,
+            title=f"{request.plan_title} / {request.plan_description}",
+            created_at=request.created_at,
+        )
+        return RequestDetail(
+            item=item,
+            payment_details=request.payment_details,
+            specialist_contact=request.specialist_contact,
+            description=f"{request.plan_id}; price={request.price_rub}; signals={request.signals_limit}; duration_days={request.duration_days}; duration_hours={request.duration_hours}",
+            updated_at=request.updated_at,
+        )
+    if kind == "analysis":
+        request = await session.get(MatchAnalysisRequest, request_id)
+        if request is None:
+            return None
+        item = RequestListItem(
+            kind="analysis",
+            id=request.id,
+            status=request.status,
+            telegram_id=request.telegram_id,
+            username=request.username,
+            title=request.match_text,
+            created_at=request.created_at,
+        )
+        return RequestDetail(
+            item=item,
+            payment_details=request.payment_details,
+            specialist_contact=request.specialist_contact,
+            description=request.match_text,
+            updated_at=request.updated_at,
+        )
+    return None
+

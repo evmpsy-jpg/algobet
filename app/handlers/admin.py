@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -38,6 +39,7 @@ from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price,
 
 router = Router(name="admin")
 PAGE_SIZE = 8
+PROCESS_STARTED_AT = datetime.utcnow()
 
 STATUS_LABELS = {
     "scheduled": "🟢 Запланированные",
@@ -134,6 +136,54 @@ def storage_usage_lines(settings) -> list[str]:
     ]
 
 
+def format_uptime(started_at: datetime, now: datetime | None = None) -> str:
+    now = now or datetime.utcnow()
+    seconds = max(0, int((now - started_at).total_seconds()))
+    days, seconds = divmod(seconds, 24 * 60 * 60)
+    hours, seconds = divmod(seconds, 60 * 60)
+    minutes, _ = divmod(seconds, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days} \u0434")
+    if hours or days:
+        parts.append(f"{hours} \u0447")
+    parts.append(f"{minutes} \u043c\u0438\u043d")
+    return " ".join(parts)
+
+
+def maintenance_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="\U0001f4be Backup \u0441\u0435\u0439\u0447\u0430\u0441", callback_data="maint:backup")],
+        [InlineKeyboardButton(text="\U0001f504 \u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c", callback_data="maint:refresh")],
+    ])
+
+
+def format_maintenance_text(settings, *, started_at: datetime = PROCESS_STARTED_AT, now: datetime | None = None) -> str:
+    db_path = sqlite_database_path(settings.database_url)
+    db_text = "SQLite" if db_path is not None else "\u0432\u043d\u0435\u0448\u043d\u044f\u044f \u0411\u0414"
+    backup = latest_sqlite_backup(settings.data_dir)
+    backup_text = (
+        f"{backup.created_at:%d.%m.%Y %H:%M} - {format_bytes(backup.size_bytes)}"
+        if backup is not None
+        else "\u043d\u0435\u0442"
+    )
+    enabled = "\u0432\u043a\u043b\u044e\u0447\u0435\u043d" if settings.sqlite_backup_enabled else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
+    lines = [
+        "\U0001f6e0 \u041e\u0431\u0441\u043b\u0443\u0436\u0438\u0432\u0430\u043d\u0438\u0435",
+        "",
+        f"\u0421\u0442\u0430\u0442\u0443\u0441: \u0431\u043e\u0442 \u0437\u0430\u043f\u0443\u0449\u0435\u043d",
+        f"Uptime: {format_uptime(started_at, now)}",
+        f"\u0411\u0430\u0437\u0430: {db_text}",
+        f"Auto backup: {enabled}",
+        f"\u0418\u043d\u0442\u0435\u0440\u0432\u0430\u043b: {settings.sqlite_backup_interval_hours} \u0447",
+        f"\u0425\u0440\u0430\u043d\u0438\u0442\u044c \u043a\u043e\u043f\u0438\u0439: {settings.sqlite_backup_keep}",
+        f"\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 backup: {backup_text}",
+        "",
+        *storage_usage_lines(settings),
+    ]
+    return "\n".join(lines)
+
+
 
 
 def _local_dt(value: datetime | None) -> datetime | None:
@@ -178,6 +228,80 @@ def signal_group_short_label(signal_or_payload: ScheduledSignal | dict | None) -
     }
     value = _signal_group_value(signal_or_payload)
     return labels.get(value, "—")
+
+
+def summarize_import_decision_logs(logs: list[SignalDecisionLog]) -> tuple[dict[str, int], dict[str, int]]:
+    group_counts: Counter[str] = Counter({"vip": 0, "all": 0, "unknown": 0})
+    rejection_reasons: Counter[str] = Counter()
+    for log in logs:
+        if log.suitable:
+            group = _signal_group_value(log.decision_payload if isinstance(log.decision_payload, dict) else None)
+            group_counts[group if group in {"vip", "all"} else "unknown"] += 1
+        else:
+            reason = str(log.reason or "\u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u0430").strip()
+            rejection_reasons[reason or "\u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u0430"] += 1
+    return dict(group_counts), dict(rejection_reasons)
+
+
+def format_import_signal_groups(group_counts: dict[str, int]) -> str:
+    vip = group_counts.get("vip", 0)
+    all_signals = group_counts.get("all", 0)
+    unknown = group_counts.get("unknown", 0)
+    total = vip + all_signals + unknown
+    text = f"\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u0441\u0438\u0433\u043d\u0430\u043b\u043e\u0432: {total} (VIP: {vip}, ALL: {all_signals})"
+    if unknown:
+        text += f", \u0431\u0435\u0437 \u0433\u0440\u0443\u043f\u043f\u044b: {unknown}"
+    return text
+
+
+def format_top_rejection_reasons(rejection_reasons: dict[str, int], *, limit: int = 5) -> str:
+    if not rejection_reasons:
+        return "\u041f\u0440\u0438\u0447\u0438\u043d\u044b \u043e\u0442\u043a\u043b\u043e\u043d\u0435\u043d\u0438\u0439: \u043d\u0435\u0442"
+    items = sorted(rejection_reasons.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    lines = ["\u041f\u0440\u0438\u0447\u0438\u043d\u044b \u043e\u0442\u043a\u043b\u043e\u043d\u0435\u043d\u0438\u0439:"]
+    lines.extend(f"- {reason}: {count}" for reason, count in items)
+    extra = len(rejection_reasons) - len(items)
+    if extra > 0:
+        lines.append(f"- \u0438 \u0435\u0449\u0451 {extra}")
+    return "\n".join(lines)
+
+
+def format_import_warnings(warnings: list[str], *, limit: int = 5) -> str:
+    if not warnings:
+        return ""
+    preview = "\n".join(f"- {item}" for item in warnings[:limit])
+    suffix = f"\n- \u0438 \u0435\u0449\u0451 {len(warnings) - limit}" if len(warnings) > limit else ""
+    return f"\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f ({len(warnings)}):\n{preview}{suffix}"
+
+
+def format_latest_import_text(
+    batch: ImportBatch,
+    group_counts: dict[str, int],
+    rejection_reasons: dict[str, int],
+    warnings: list[str] | None = None,
+) -> str:
+    lines = [
+        "\U0001f4cb \u041f\u043e\u0441\u043b\u0435\u0434\u043d\u044f\u044f \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0430",
+        "",
+        f"\u0424\u0430\u0439\u043b: {batch.file_name}",
+        f"\u0421\u0442\u0430\u0442\u0443\u0441: {batch.status}",
+        f"\u0414\u0430\u0442\u0430: {_fmt_dt(batch.created_at, '%d.%m.%Y %H:%M:%S')}",
+        f"\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0430: {_fmt_dt(batch.finished_at, '%d.%m.%Y %H:%M:%S')}",
+        "",
+        f"\u0421\u0442\u0440\u043e\u043a \u0432 \u043b\u0438\u0441\u0442\u0435: {batch.total_rows}",
+        f"\u0420\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u043d\u043e \u043c\u0430\u0442\u0447\u0435\u0439: {batch.parsed_matches}",
+        f"\u041d\u043e\u0432\u044b\u0445: {batch.inserted_matches}",
+        f"\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u043e: {batch.updated_matches}",
+        f"\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442 \u0432 \u0441\u0432\u0435\u0436\u0435\u0439 \u0442\u0430\u0431\u043b\u0438\u0446\u0435: {batch.missing_matches}",
+        "",
+        format_import_signal_groups(group_counts),
+        "",
+        format_top_rejection_reasons(rejection_reasons),
+    ]
+    warning_text = format_import_warnings(warnings or [])
+    if warning_text:
+        lines.extend(["", warning_text])
+    return "\n".join(lines)
 
 
 def _format_level_result_line(level: str, counter) -> str:
@@ -432,6 +556,22 @@ def _signal_group_filter_condition(group_filter: str):
     return None
 
 
+def format_signals_dashboard_text(counts: dict[str, int], group_counts: dict[str, int]) -> str:
+    total = sum(counts.values())
+    return (
+        "\U0001f4ca <b>\u0421\u0438\u0433\u043d\u0430\u043b\u044b</b>\n\n"
+        f"\u0412\u0441\u0435\u0433\u043e \u0437\u0430\u043f\u0438\u0441\u0435\u0439: {total}\n"
+        f"\U0001f7e2 \u0417\u0430\u043f\u043b\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u043e: {counts.get('scheduled', 0)}\n"
+        f"\U0001f7e1 \u0413\u043e\u0442\u043e\u0432\u043e \u043a \u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0435: {counts.get('ready', 0)}\n"
+        f"\U0001f4e4 \u041e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e: {counts.get('sent', 0)}\n"
+        f"\u274c \u041e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: {counts.get('cancelled', 0)}\n\n"
+        "\u041f\u043e \u0442\u0438\u043f\u0430\u043c:\n"
+        f"VIP: {group_counts.get('vip', 0)}\n"
+        f"ALL: {group_counts.get('all', 0)}\n"
+        f"\u0411\u0435\u0437 \u0442\u0438\u043f\u0430: {group_counts.get('unknown', 0)}"
+    )
+
+
 async def get_signal_counts() -> dict[str, int]:
     async with SessionFactory() as session:
         rows = (await session.execute(
@@ -456,19 +596,7 @@ async def get_signal_group_counts() -> dict[str, int]:
 async def show_dashboard(target: Message | CallbackQuery) -> None:
     counts = await get_signal_counts()
     group_counts = await get_signal_group_counts()
-    total = sum(counts.values())
-    text = (
-        "📊 <b>Сигналы</b>\n\n"
-        f"Всего записей: {total}\n"
-        f"🟢 Запланировано: {counts.get('scheduled', 0)}\n"
-        f"🟡 Готово к отправке: {counts.get('ready', 0)}\n"
-        f"📤 Отправлено: {counts.get('sent', 0)}\n"
-        f"\u274c \u041e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: {counts.get('cancelled', 0)}\\n\\n"
-        "\u041f\u043e \u0442\u0438\u043f\u0430\u043c:\\n"
-        f"VIP: {group_counts.get('vip', 0)}\n"
-        f"ALL: {group_counts.get('all', 0)}\n"
-        f"\u0411\u0435\u0437 \u0442\u0438\u043f\u0430: {group_counts.get('unknown', 0)}"
-    )
+    text = format_signals_dashboard_text(counts, group_counts)
     markup = signals_dashboard_keyboard(counts)
     if isinstance(target, CallbackQuery):
         if target.message:
@@ -522,21 +650,25 @@ async def receive_upload(message: Message, state: FSMContext) -> None:
     finally:
         await state.clear()
         remove_uploaded_file(destination)
-    warning_text = ""
-    if summary.warnings:
-        preview = "\n".join(f"• {item}" for item in summary.warnings[:5])
-        warning_text = f"\n\nПредупреждения ({len(summary.warnings)}):\n{preview}"
-    await message.answer(
-        "✅ Загрузка завершена\n\n"
-        f"Строк в листе: {summary.total_rows}\n"
-        f"Распознано матчей: {summary.parsed_matches}\n"
-        f"Новых матчей: {summary.inserted_matches}\n"
-        f"Обновлено матчей: {summary.updated_matches}\n"
-        f"Отсутствуют в свежей таблице: {summary.missing_matches}\n"
-        f"Запланировано сигналов: {summary.scheduled_signals}\n"
-        f"Отменено сигналов: {summary.cancelled_signals}{warning_text}",
-        reply_markup=admin_menu(),
-    )
+    lines = [
+        "\u2705 \u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0430",
+        "",
+        f"\u0421\u0442\u0440\u043e\u043a \u0432 \u043b\u0438\u0441\u0442\u0435: {summary.total_rows}",
+        f"\u0420\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u043d\u043e \u043c\u0430\u0442\u0447\u0435\u0439: {summary.parsed_matches}",
+        f"\u041d\u043e\u0432\u044b\u0445 \u043c\u0430\u0442\u0447\u0435\u0439: {summary.inserted_matches}",
+        f"\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u043e \u043c\u0430\u0442\u0447\u0435\u0439: {summary.updated_matches}",
+        f"\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442 \u0432 \u0441\u0432\u0435\u0436\u0435\u0439 \u0442\u0430\u0431\u043b\u0438\u0446\u0435: {summary.missing_matches}",
+        "",
+        format_import_signal_groups(summary.scheduled_by_group),
+        f"\u041e\u0442\u043c\u0435\u043d\u0435\u043d\u043e \u0441\u0438\u0433\u043d\u0430\u043b\u043e\u0432: {summary.cancelled_signals}",
+        "",
+        format_top_rejection_reasons(summary.rejection_reasons),
+    ]
+    warning_text = format_import_warnings(summary.warnings)
+    if warning_text:
+        lines.extend(["", warning_text])
+    await message.answer("\n".join(lines), reply_markup=admin_menu())
+
 
 
 @router.message(F.text == "📊 Сигналы")
@@ -865,13 +997,19 @@ async def latest_import(message: Message) -> None:
         return
     async with SessionFactory() as session:
         batch = await session.scalar(select(ImportBatch).order_by(desc(ImportBatch.id)).limit(1))
+        if batch is not None:
+            logs = list((await session.scalars(
+                select(SignalDecisionLog).where(SignalDecisionLog.import_batch_id == batch.id)
+            )).all())
+        else:
+            logs = []
     if batch is None:
-        await message.answer("Загрузок ещё не было.")
+        await message.answer("\u0417\u0430\u0433\u0440\u0443\u0437\u043e\u043a \u0435\u0449\u0451 \u043d\u0435 \u0431\u044b\u043b\u043e.")
         return
-    await message.answer(
-        f"Последняя загрузка: {batch.file_name}\nСтатус: {batch.status}\nМатчей: {batch.parsed_matches}\n"
-        f"Новых: {batch.inserted_matches}\nОбновлено: {batch.updated_matches}\nДата: {_fmt_dt(batch.created_at, '%d.%m.%Y %H:%M:%S')}"
-    )
+    group_counts, rejection_reasons = summarize_import_decision_logs(logs)
+    warnings = batch.error_text.splitlines() if batch.error_text else []
+    await message.answer(format_latest_import_text(batch, group_counts, rejection_reasons, warnings))
+
 
 
 async def show_sent_history(target: Message | CallbackQuery) -> None:
@@ -959,6 +1097,49 @@ async def sent_history_callback(callback: CallbackQuery) -> None:
         await callback.answer("Доступ запрещён", show_alert=True)
         return
     await show_sent_history(callback)
+
+async def show_maintenance(target: Message | CallbackQuery) -> None:
+    settings = get_settings()
+    text = format_maintenance_text(settings)
+    markup = maintenance_keyboard()
+    if isinstance(target, CallbackQuery):
+        if target.message:
+            await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == "🛠 Обслуживание")
+async def maintenance_info(message: Message) -> None:
+    if not is_admin(message):
+        return
+    await show_maintenance(message)
+
+
+@router.callback_query(F.data == "maint:refresh")
+async def maintenance_refresh_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await show_maintenance(callback)
+
+
+@router.callback_query(F.data == "maint:backup")
+async def maintenance_backup_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    settings = get_settings()
+    try:
+        result = create_sqlite_backup(settings.database_url, settings.data_dir, keep=settings.sqlite_backup_keep)
+    except (FileNotFoundError, ValueError) as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    await callback.answer(
+        f"Backup \u0441\u043e\u0437\u0434\u0430\u043d: {result.created.path.name} ({format_bytes(result.created.size_bytes)})",
+        show_alert=True,
+    )
+    await show_maintenance(callback)
+
 
 @router.message(F.text == "📈 Статистика")
 async def admin_statistics(message: Message) -> None:
@@ -1950,8 +2131,6 @@ def format_admin_settings_text(
         f"Отправка до матча: {signal['lead_minutes']} минут\n"
         f"Минимум H2H (CP): {signal['min_h2h_games']}\n"
         f"Минимальная форма Q/X: {signal['min_favorite_form']}\n"
-        f"Минимум BG для П1: {signal['min_bg_p1']}\n"
-        f"Минимум BF для П2: {signal['min_bf_p2']}\n"
         f"ЖБ-сигнал от: {high['min_probability']}%\n"
         f"Проверка очереди: каждые {settings.scheduler_interval_seconds} секунд\n"
         f"Максимальный Excel: {settings.max_upload_mb} МБ\n\n"
@@ -2005,7 +2184,7 @@ async def admin_settings_backup_callback(callback: CallbackQuery) -> None:
         return
     settings = get_settings()
     try:
-        result = create_sqlite_backup(settings.database_url, settings.data_dir)
+        result = create_sqlite_backup(settings.database_url, settings.data_dir, keep=settings.sqlite_backup_keep)
     except (FileNotFoundError, ValueError) as error:
         await callback.answer(str(error), show_alert=True)
         return

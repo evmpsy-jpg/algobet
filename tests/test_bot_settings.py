@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base
+from app.settings import Settings
 from app.services.bot_settings import (
     ANALYSIS_PAYMENT_DETAILS_KEY,
     ANALYSIS_SPECIALIST_CONTACT_KEY,
@@ -78,3 +79,23 @@ async def test_subscription_payment_config_uses_separate_saved_values() -> None:
         assert subscription_config.payment_details == "Подписка карта"
         assert subscription_config.specialist_contact == "@subspec"
     await engine.dispose()
+
+
+
+def test_settings_parses_multiple_web_admin_credentials() -> None:
+    settings = Settings(
+        BOT_TOKEN="token",
+        WEB_ADMIN_USERS="admin:secret, manager:second, broken, empty:",
+    )
+
+    assert settings.web_admin_credentials == {"admin": "secret", "manager": "second"}
+
+
+def test_settings_web_admin_credentials_falls_back_to_single_admin() -> None:
+    settings = Settings(
+        BOT_TOKEN="token",
+        WEB_ADMIN_USERNAME="admin",
+        WEB_ADMIN_PASSWORD="secret",
+    )
+
+    assert settings.web_admin_credentials == {"admin": "secret"}

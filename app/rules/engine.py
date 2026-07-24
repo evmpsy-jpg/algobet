@@ -86,21 +86,21 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     # Первичные условия кандидатов.
     #
     # Все сигналы:
-    # P1: DG входит в {8, 9, 10}
-    # P2: DH входит в {-8, -9, -10}
+    # P1: DG входит в {8, 9, 10} или EG = 4
+    # P2: DH входит в {8, 9, 10} или EH = 4
     #
     # VIP сигналы:
-    # P1: EG == 5 и CS входит в {8, 9, 10}
-    # P2: EH == 5 и CT входит в {8, 9, 10}
+    # P1: EG == 5 OR CS in {8, 9, 10}
+    # P2: EH == 5 OR CT in {8, 9, 10}
     # ---------------------------------------------------------
     all_p1_allowed = {8.0, 9.0, 10.0}
-    all_p2_allowed = {-8.0, -9.0, -10.0}
+    all_p2_allowed = {8.0, 9.0, 10.0}
     vip_range_allowed = {8.0, 9.0, 10.0}
 
-    p1_all = match.all_signal_p1 in all_p1_allowed
-    p2_all = match.all_signal_p2 in all_p2_allowed
-    p1_vip = match.p1_exact == 5 and match.p1_range in vip_range_allowed
-    p2_vip = match.p2_exact == 5 and match.p2_range in vip_range_allowed
+    p1_all = match.all_signal_p1 in all_p1_allowed or match.p1_exact == 4
+    p2_all = match.all_signal_p2 in all_p2_allowed or match.p2_exact == 4
+    p1_vip = match.p1_exact == 5 or match.p1_range in vip_range_allowed
+    p2_vip = match.p2_exact == 5 or match.p2_range in vip_range_allowed
 
     p1_base = p1_all or p1_vip
     p2_base = p2_all or p2_vip
@@ -117,7 +117,7 @@ def evaluate_match(match: MatchData) -> SignalDecision:
                 f"EG={match.p1_exact}; "
                 f"CS={match.p1_range}"
             ),
-            expected="ALL: DG∈{8,9,10}; VIP: EG=5 и CS∈{8,9,10}",
+            expected="ALL: DG in {8,9,10} or EG=4; VIP: EG=5 or CS in {8,9,10}",
             side=1,
         )
     )
@@ -132,7 +132,7 @@ def evaluate_match(match: MatchData) -> SignalDecision:
                 f"EH={match.p2_exact}; "
                 f"CT={match.p2_range}"
             ),
-            expected="ALL: DH∈{-8,-9,-10}; VIP: EH=5 и CT∈{8,9,10}",
+            expected="ALL: DH in {8,9,10} or EH=4; VIP: EH=5 or CT in {8,9,10}",
             side=2,
         )
     )
@@ -141,27 +141,14 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     # Дополнительные фильтры.
     # ---------------------------------------------------------
     min_form = float(rules["min_favorite_form"])
-    min_bg = float(rules["min_bg_p1"])
-    min_bf = float(rules["min_bf_p2"])
-
     p1_form_ok = (
         match.form_p1 is not None
         and match.form_p1 >= min_form
     )
 
-    p1_bg_ok = (
-        match.bg_p1 is not None
-        and match.bg_p1 >= min_bg
-    )
-
     p2_form_ok = (
         match.form_p2 is not None
         and match.form_p2 >= min_form
-    )
-
-    p2_bf_ok = (
-        match.bf_p2 is not None
-        and match.bf_p2 >= min_bf
     )
 
     if p1_base:
@@ -176,16 +163,6 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             )
         )
 
-        traces.append(
-            _trace(
-                code="P1_BG",
-                label="Фильтр P1 (BG)",
-                passed=p1_bg_ok,
-                actual=match.bg_p1,
-                expected=f">= {min_bg:g}",
-                side=1,
-            )
-        )
 
     if p2_base:
         traces.append(
@@ -199,27 +176,15 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             )
         )
 
-        traces.append(
-            _trace(
-                code="P2_BF",
-                label="Фильтр P2 (BF)",
-                passed=p2_bf_ok,
-                actual=match.bf_p2,
-                expected=f">= {min_bf:g}",
-                side=2,
-            )
-        )
 
     p1_ok = (
         p1_base
         and p1_form_ok
-        and p1_bg_ok
     )
 
     p2_ok = (
         p2_base
         and p2_form_ok
-        and p2_bf_ok
     )
 
     if not p1_ok and not p2_ok:

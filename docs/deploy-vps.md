@@ -155,3 +155,98 @@ docker compose logs -n 100 bot
 docker compose restart bot
 docker compose down
 ```
+
+## Web Admin Dashboard
+
+The Docker Compose setup now includes a read-only web dashboard service on port `8000`. It uses HTTP Basic Auth credentials from `.env`; multiple admins are configured through `WEB_ADMIN_USERS`.
+
+Add admin credentials to `/opt/algobet/.env`:
+
+```env
+WEB_ADMIN_USERS=admin:PASTE_LONG_RANDOM_PASSWORD_HERE,manager:PASTE_SECOND_LONG_PASSWORD_HERE
+```
+
+Start both services:
+
+```bash
+cd /opt/algobet
+docker compose up -d --build
+```
+
+The Compose file publishes the web dashboard on a non-standard external port from `WEB_ADMIN_PORT`. This is convenient but it is still plain HTTP, so use long unique passwords and do not reuse them elsewhere.
+
+Add the external port to `/opt/algobet/.env`:
+
+```env
+WEB_ADMIN_PORT=48291
+```
+
+Open the dashboard:
+
+```text
+http://217.114.5.208:48291/
+```
+
+Use one of the `WEB_ADMIN_USERS` login/password pairs from `/opt/algobet/.env` when the browser asks for credentials.
+
+Useful checks:
+
+```bash
+docker compose ps
+docker compose logs -n 100 web
+docker compose restart web
+```
+
+## External Web Admin With HTTPS
+
+For stronger external access later, use a domain and expose the Python web service through nginx with HTTPS.
+
+1. Point a domain or subdomain to the VPS IP, for example:
+
+```text
+admin.example.com -> 217.114.5.208
+```
+
+2. Configure several web admins in `/opt/algobet/.env`:
+
+```env
+WEB_ADMIN_USERS=evgeniy:LONG_PASSWORD_1,manager:LONG_PASSWORD_2
+```
+
+3. Install nginx and certbot:
+
+```bash
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
+
+4. Copy the nginx template and edit `server_name`:
+
+```bash
+sudo cp /opt/algobet/deploy/algobet-web-nginx.conf /etc/nginx/sites-available/algobet-web
+sudo nano /etc/nginx/sites-available/algobet-web
+sudo ln -sf /etc/nginx/sites-available/algobet-web /etc/nginx/sites-enabled/algobet-web
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. Issue HTTPS certificate:
+
+```bash
+sudo certbot --nginx -d admin.example.com
+```
+
+6. Start the Docker services:
+
+```bash
+cd /opt/algobet
+docker compose up -d --build
+```
+
+Then open:
+
+```text
+https://admin.example.com/
+```
+
+The browser will ask for the login and password from `WEB_ADMIN_USERS`.

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, Match, ScheduledSignal, SignalDelivery, SignalResult, User
-from app.handlers.admin import admin_settings_keyboard, directory_size_bytes, format_bytes, format_sent_history_summary, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines
+from app.database.models import Base, ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, SignalResult, User
+from app.handlers.admin import admin_settings_keyboard, directory_size_bytes, format_bytes, format_latest_import_text, format_sent_history_summary, format_signals_dashboard_text, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines, summarize_import_decision_logs
 
 
 def make_match() -> Match:
@@ -206,12 +206,53 @@ def test_signals_dashboard_keyboard_has_cancelled_button() -> None:
     assert any("4" in text for text in texts if text)
 
 
+def test_format_signals_dashboard_text_uses_real_line_breaks() -> None:
+    text = format_signals_dashboard_text(
+        {"scheduled": 0, "ready": 0, "sent": 1, "cancelled": 0},
+        {"vip": 1, "all": 0, "unknown": 0},
+    )
+
+    assert "\\n" not in text
+    assert "\n\n\u041f\u043e \u0442\u0438\u043f\u0430\u043c:\nVIP: 1" in text
+
+
 def test_admin_settings_keyboard_has_backup_button() -> None:
     markup = admin_settings_keyboard()
 
     callbacks = [row[0].callback_data for row in markup.inline_keyboard]
 
     assert "admset:backup" in callbacks
+
+
+def test_latest_import_format_shows_signal_groups_and_rejection_reasons() -> None:
+    batch = ImportBatch(
+        file_name="sample.xlsx",
+        stored_path="uploads/sample.xlsx",
+        file_sha256="abc",
+        uploaded_by_telegram_id=1,
+        status="completed",
+        total_rows=100,
+        parsed_matches=3,
+        inserted_matches=2,
+        updated_matches=1,
+        missing_matches=0,
+        created_at=datetime(2026, 7, 24, 8, 0),
+        finished_at=datetime(2026, 7, 24, 8, 1),
+    )
+    logs = [
+        SignalDecisionLog(match_id=1, import_batch_id=1, algorithm_version="v1", source="import", suitable=True, side=1, selected_player="A", probability=99, level="TOP", signal_type="SET_VIP_TOP", decision_payload={"signal_group": "vip"}),
+        SignalDecisionLog(match_id=2, import_batch_id=1, algorithm_version="v1", source="import", suitable=True, side=2, selected_player="B", probability=95, level="STRONG", signal_type="SET_ALL_STRONG", decision_payload={"signal_group": "all"}),
+        SignalDecisionLog(match_id=3, import_batch_id=1, algorithm_version="v1", source="import", suitable=False, reason="No rule", decision_payload={}),
+    ]
+
+    group_counts, rejection_reasons = summarize_import_decision_logs(logs)
+    text = format_latest_import_text(batch, group_counts, rejection_reasons, ["Row 7: test"])
+
+    assert "sample.xlsx" in text
+    assert "VIP: 1" in text
+    assert "ALL: 1" in text
+    assert "No rule: 1" in text
+    assert "\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f (1)" in text
 
 
 def test_storage_usage_helpers_format_sizes_and_sqlite_path(tmp_path) -> None:

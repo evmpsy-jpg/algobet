@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,8 @@ class ImportSummary:
     missing_matches: int
     scheduled_signals: int
     cancelled_signals: int
+    scheduled_by_group: dict[str, int]
+    rejection_reasons: dict[str, int]
     warnings: list[str]
 
 
@@ -66,6 +69,8 @@ async def import_tournaments(
     updated_count = 0
     scheduled = 0
     cancelled = 0
+    scheduled_by_group: Counter[str] = Counter()
+    rejection_reasons: Counter[str] = Counter()
 
     # Сначала отмечаем прошлые матчи отсутствующими. Найденные ниже вернём в актуальное состояние.
     await session.execute(
@@ -157,6 +162,8 @@ async def import_tournaments(
             await auto_set_signal_result(session, signal, existing)
 
         if decision.suitable:
+            group = str((decision.payload or {}).get("signal_group") or "unknown").strip().lower()
+            scheduled_by_group[group if group in {"vip", "all"} else "unknown"] += 1
             lead_minutes = int(get_signal_rules()["signal"].get("lead_minutes", settings.signal_lead_minutes))
             send_at = parsed.match_start_at - timedelta(minutes=lead_minutes)
             if signal is None:
@@ -172,11 +179,14 @@ async def import_tournaments(
             signal.recalculated_at = datetime.utcnow()
             scheduled += 1
         elif signal is not None and signal.status != "sent":
+            rejection_reasons[decision.reason or "\u041c\u0430\u0442\u0447 \u043d\u0435 \u0441\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u0435\u0442 \u0443\u0441\u043b\u043e\u0432\u0438\u044f\u043c"] += 1
             signal.status = "cancelled"
             signal.cancel_reason = decision.reason or "Матч не соответствует условиям"
             signal.source_import_id = batch.id
             signal.recalculated_at = datetime.utcnow()
             cancelled += 1
+        elif not decision.suitable:
+            rejection_reasons[decision.reason or "\u041c\u0430\u0442\u0447 \u043d\u0435 \u0441\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u0435\u0442 \u0443\u0441\u043b\u043e\u0432\u0438\u044f\u043c"] += 1
 
     missing_query = select(Match).where(Match.is_present_in_latest_import.is_(False))
     missing_matches = list((await session.scalars(missing_query)).all())
@@ -189,11 +199,13 @@ async def import_tournaments(
             signal.cancel_reason = "Матч отсутствует в последней загруженной таблице"
             signal.source_import_id = batch.id
             cancelled += 1
+            rejection_reasons[signal.cancel_reason] += 1
 
     batch.status = "completed"
     batch.inserted_matches = inserted
     batch.updated_matches = updated_count
     batch.missing_matches = len(missing_matches)
+    batch.error_text = "\n".join(result.warnings) if result.warnings else None
     batch.finished_at = datetime.utcnow()
     await session.commit()
 
@@ -206,5 +218,7 @@ async def import_tournaments(
         missing_matches=len(missing_matches),
         scheduled_signals=scheduled,
         cancelled_signals=cancelled,
+        scheduled_by_group=dict(scheduled_by_group),
+        rejection_reasons=dict(rejection_reasons),
         warnings=result.warnings,
     )
