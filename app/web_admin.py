@@ -579,7 +579,8 @@ def render_quality_html(summary: QualitySummary, *, token: str = "", auto_result
     return _base_html("Статистика", body, token=token)
 
 
-def render_users_html(users: list[UserListItem], *, token: str = "") -> str:
+def render_users_html(users: list[UserListItem], *, token: str = "", search: str = "") -> str:
+    search_value = escape(search)
     rows = "".join(
         f"""
         <tr>
@@ -597,9 +598,13 @@ def render_users_html(users: list[UserListItem], *, token: str = "") -> str:
         for user in users
     ) or '<tr><td colspan="9" class="muted">Пользователей пока нет.</td></tr>'
     body = f"""
-    <section>
-      <h2>Пользователи</h2>
-      <table><thead><tr><th>ID</th><th>Telegram</th><th>Имя</th><th>Статус</th><th>Доступ</th><th>Платных</th><th>Пробных</th><th class="optional">До</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{rows}</tbody></table>
+    <section><h2>Пользователи</h2>
+      <form class="actions" method="get" action="/users">
+        <input name="search" value="{search_value}" placeholder="ID Telegram, имя пользователя или имя" autocomplete="off">
+        <button class="action-button" type="submit">Найти</button>
+        <a class="button" href="/users">Сбросить</a>
+      </form>
+      <table><thead><tr><th>ID</th><th>ID Telegram</th><th>Имя</th><th>Статус</th><th>Доступ</th><th>Платных</th><th>Пробных</th><th class="optional">До</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     """
     return _base_html("Пользователи", body, token=token)
@@ -850,9 +855,10 @@ async def quality_auto_update(_: Annotated[None, Depends(require_web_admin)]) ->
 
 @app.get("/users", response_class=HTMLResponse)
 async def users(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    search = (request.query_params.get("search") or "").strip()
     async with SessionFactory() as session:
-        rows = await collect_user_list(session)
-    return HTMLResponse(render_users_html(rows, token=""))
+        rows = await collect_user_list(session, search=search)
+    return HTMLResponse(render_users_html(rows, token="", search=search))
 
 
 @app.get("/requests", response_class=HTMLResponse)

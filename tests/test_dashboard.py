@@ -139,6 +139,9 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
         won_signals = await collect_signal_list(session, result_filter="won")
         unrated_signals = await collect_signal_list(session, result_filter="unrated")
         users = await collect_user_list(session)
+        users_by_id = await collect_user_list(session, search="1001")
+        users_by_username = await collect_user_list(session, search="inactive")
+        users_by_missing = await collect_user_list(session, search="missing")
         requests = await collect_request_list(session)
         deliveries = await collect_delivery_list(session)
         failed_deliveries = await collect_delivery_list(session, status_filter="failed")
@@ -187,6 +190,9 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert users[0].telegram_id == 1002
     assert users[0].failed_deliveries == 1
     assert users[1].sent_deliveries == 1
+    assert [item.telegram_id for item in users_by_id] == [1001]
+    assert [item.username for item in users_by_username] == ["inactive_user"]
+    assert users_by_missing == []
 
     assert [item.kind for item in requests] == ["subscription", "analysis"]
     assert signal_detail is not None

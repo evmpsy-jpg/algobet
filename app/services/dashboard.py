@@ -505,15 +505,25 @@ async def collect_signal_list(
     ]
 
 
-async def collect_user_list(session: AsyncSession, *, limit: int = 50) -> list[UserListItem]:
-    rows = (
-        await session.execute(
-            select(User, UserAccess)
-            .outerjoin(UserAccess, UserAccess.user_id == User.id)
-            .order_by(desc(User.id))
-            .limit(limit)
-        )
-    ).all()
+async def collect_user_list(session: AsyncSession, *, search: str | None = None, limit: int = 50) -> list[UserListItem]:
+    query = (
+        select(User, UserAccess)
+        .outerjoin(UserAccess, UserAccess.user_id == User.id)
+        .order_by(desc(User.id))
+        .limit(limit)
+    )
+    search_text = (search or "").strip()
+    if search_text:
+        like = f"%{search_text.lower()}%"
+        conditions = [
+            func.lower(User.username).like(like),
+            func.lower(User.first_name).like(like),
+            func.lower(User.last_name).like(like),
+        ]
+        if search_text.isdigit():
+            conditions.append(User.telegram_id == int(search_text))
+        query = query.where(or_(*conditions))
+    rows = (await session.execute(query)).all()
     user_ids = [user.id for user, _ in rows]
     delivery_counts = await _delivery_counts_by_user(session, user_ids)
 

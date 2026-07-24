@@ -2217,7 +2217,7 @@ async def admin_edit_analysis_contact_callback(callback: CallbackQuery, state: F
     if callback.message:
         await callback.message.answer(
             "Напишите контакт специалиста для анализа матча.\n\n"
-            "Например: @username или номер телефона."
+            "Например: @ivanov или номер телефона."
         )
     await callback.answer()
 

@@ -261,8 +261,12 @@ def test_render_users_html_shows_access_and_delivery_counts() -> None:
             )
         ],
         token="secret",
+        search="315715137",
     )
 
+    assert 'name="search"' in html
+    assert 'value="315715137"' in html
+    assert "ID Telegram, имя пользователя или имя" in html
     assert "@admin" in html
     assert "Платный / Активен" in html
     assert "3 / 1" in html
