@@ -17,7 +17,7 @@ from app.database.models import MatchAnalysisRequest, ScheduledSignal, Subscript
 from app.database.session import SessionFactory, init_db
 from app.services.access import grant_subscription_access
 from app.services.signal_sender import process_delivery_now
-from app.services.signal_results import format_winrate, set_signal_result
+from app.services.signal_results import AutoResultSummary, auto_update_signal_results, format_winrate, set_signal_result
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
@@ -552,8 +552,16 @@ def _quality_table(title: str, items: list[QualityStatsItem]) -> str:
     """
 
 
-def render_quality_html(summary: QualitySummary, *, token: str = "") -> str:
+def render_quality_html(summary: QualitySummary, *, token: str = "", auto_result: AutoResultSummary | None = None) -> str:
     overall = summary.overall
+    auto_message = ""
+    if auto_result is not None:
+        auto_message = (
+            '<p class="muted">Автообновление: '
+            f'проверено {auto_result.scanned}, обновлено {auto_result.updated}, '
+            f'без изменений {auto_result.unchanged}, без счета {auto_result.no_score}, '
+            f'ручных пропущено {auto_result.skipped_manual}.</p>'
+        )
     body = f"""
     <section><h2>Статистика качества</h2>
       <div class="stats">
@@ -562,6 +570,8 @@ def render_quality_html(summary: QualitySummary, *, token: str = "") -> str:
         <div class="metric"><span>Без результата</span><strong>{overall.unrated_sent}</strong></div>
         <div class="metric"><span>Процент захода</span><strong>{format_winrate(overall.counter.winrate)}</strong></div>
       </div>
+      <div class="actions"><form method="post" action="/quality/auto-update"><button class="action-button" type="submit">Обновить результаты по счету</button></form></div>
+      {auto_message}
     </section>
     {_quality_table('По группам', summary.by_group)}
     {_quality_table('По уровням', summary.by_level)}
@@ -813,7 +823,29 @@ async def delivery_retry(
 async def quality(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
     async with SessionFactory() as session:
         summary = await collect_quality_summary(session)
-    return HTMLResponse(render_quality_html(summary, token=""))
+    auto_result = None
+    if "auto_scanned" in request.query_params:
+        auto_result = AutoResultSummary(
+            scanned=int(request.query_params.get("auto_scanned") or 0),
+            updated=int(request.query_params.get("auto_updated") or 0),
+            unchanged=int(request.query_params.get("auto_unchanged") or 0),
+            skipped_manual=int(request.query_params.get("auto_skipped_manual") or 0),
+            no_score=int(request.query_params.get("auto_no_score") or 0),
+        )
+    return HTMLResponse(render_quality_html(summary, token="", auto_result=auto_result))
+
+
+@app.post("/quality/auto-update")
+async def quality_auto_update(_: Annotated[None, Depends(require_web_admin)]) -> RedirectResponse:
+    async with SessionFactory() as session:
+        result = await auto_update_signal_results(session)
+        await session.commit()
+    params = (
+        f"auto_scanned={result.scanned}&auto_updated={result.updated}"
+        f"&auto_unchanged={result.unchanged}&auto_skipped_manual={result.skipped_manual}"
+        f"&auto_no_score={result.no_score}"
+    )
+    return RedirectResponse(url=f"/quality?{params}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/users", response_class=HTMLResponse)

@@ -25,7 +25,7 @@ from app.services.dashboard import (
     UserDetail,
     UserListItem,
 )
-from app.services.signal_results import ResultCounter
+from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
     render_dashboard_html,
     render_deliveries_csv,
@@ -220,11 +220,20 @@ def test_render_quality_html_shows_signal_result_statistics() -> None:
         ],
     )
 
-    html = render_quality_html(summary, token="secret")
+    html = render_quality_html(
+        summary,
+        token="secret",
+        auto_result=AutoResultSummary(scanned=5, updated=2, unchanged=1, skipped_manual=1, no_score=1),
+    )
 
     assert "Статистика качества" in html
     assert "Отправлено" in html
     assert "Без результата" in html
+    assert 'action="/quality/auto-update"' in html
+    assert "Обновить результаты по счету" in html
+    assert "Автообновление" in html
+    assert "проверено 5" in html
+    assert "обновлено 2" in html
     assert "50.0%" in html
     assert "VIP" in html
     assert "ALL" in html
