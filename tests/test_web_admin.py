@@ -92,11 +92,11 @@ def make_signal() -> SignalListItem:
 def test_render_dashboard_html_shows_core_metrics_and_navigation() -> None:
     html = render_dashboard_html(make_summary(), token="secret")
 
-    assert "Algobet Admin" in html
+    assert "Админка Algobet" in html
     assert "sample.xlsx" in html
     assert "<strong>10</strong>" in html
-    assert "ready" in html
-    assert "sent" in html
+    assert "Готов" in html
+    assert "Отправлен" in html
     assert "Player &lt;One&gt;" in html
     assert "/signals" in html
     assert "/users" in html
@@ -106,7 +106,7 @@ def test_render_dashboard_html_shows_core_metrics_and_navigation() -> None:
 def test_render_signals_html_shows_filters_and_delivery_counts() -> None:
     html = render_signals_html([make_signal()], token="secret", status_filter="sent")
 
-    assert "Signals sent" in html
+    assert "Сигналы: Отправлен" in html
     assert "/signals?status=ready" in html
     assert "Player &lt;One&gt;" in html
     assert "5 / 1" in html
@@ -136,7 +136,7 @@ def test_render_users_html_shows_access_and_delivery_counts() -> None:
     )
 
     assert "@admin" in html
-    assert "paid / active" in html
+    assert "Платный / Активен" in html
     assert "3 / 1" in html
     assert "/users/1" in html
 
@@ -157,7 +157,7 @@ def test_render_requests_html_shows_subscription_and_analysis_items() -> None:
         token="secret",
     )
 
-    assert "subscription" in html
+    assert "Подписка" in html
     assert "VIP &lt;99%&gt;" in html
     assert "@admin" in html
     assert "/requests/subscription/7" in html
@@ -182,7 +182,7 @@ def test_render_signal_detail_html_shows_message_deliveries_and_trace() -> None:
 
     html = render_signal_detail_html(detail, token="secret")
 
-    assert "Signal #11" in html
+    assert "Сигнал #11" in html
     assert "Signal &lt;message&gt;" in html
     assert "Accepted &lt;rule&gt;" in html
     assert "P1_BASE" in html
@@ -208,7 +208,7 @@ def test_render_user_detail_html_shows_related_deliveries_and_requests() -> None
 
     html = render_user_detail_html(detail, token="secret")
 
-    assert "User #1" in html
+    assert "Пользователь #1" in html
     assert "Match &lt;A&gt;" in html
     assert "/requests/analysis/4" in html
 
@@ -224,7 +224,7 @@ def test_render_request_detail_html_shows_payment_and_contact() -> None:
 
     html = render_request_detail_html(detail, token="secret")
 
-    assert "Subscription Request #7" in html
+    assert "Заявка: Подписка #7" in html
     assert "Card &lt;123&gt;" in html
     assert "@spec" in html
 
@@ -245,10 +245,10 @@ def test_render_maintenance_html_shows_storage_and_backup_settings() -> None:
         )
     )
 
-    assert "Maintenance" in html
+    assert "Обслуживание" in html
     assert "data/algobet.db" in html
     assert "2.0 KB" in html
-    assert "enabled" in html
+    assert "Включен" in html
     assert "/maintenance" in html
 
 
