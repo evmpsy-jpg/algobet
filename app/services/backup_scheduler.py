@@ -6,6 +6,7 @@ from typing import Any
 
 from app.settings import get_settings
 from app.services.sqlite_backup import BackupResult, create_sqlite_backup
+from app.services.admin_notifications import format_backup_error_admin_text, notify_admins
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ async def run_sqlite_backup_once(settings: Any | None = None) -> BackupResult | 
     return result
 
 
-async def sqlite_backup_loop() -> None:
+async def sqlite_backup_loop(bot: Any | None = None) -> None:
     settings = get_settings()
     interval = backup_interval_seconds(settings)
     while True:
@@ -48,8 +49,12 @@ async def sqlite_backup_loop() -> None:
             await run_sqlite_backup_once(settings)
         except asyncio.CancelledError:
             raise
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
             logger.warning("SQLite backup skipped: database file does not exist")
-        except Exception:
+            if bot is not None:
+                await notify_admins(bot, settings.admin_ids, format_backup_error_admin_text(exc))
+        except Exception as exc:
             logger.exception("SQLite backup failed")
+            if bot is not None:
+                await notify_admins(bot, settings.admin_ids, format_backup_error_admin_text(exc))
         await asyncio.sleep(interval)

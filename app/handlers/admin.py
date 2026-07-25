@@ -17,6 +17,7 @@ from app.database.models import ImportBatch, Match, MatchAnalysisRequest, Schedu
 from app.database.session import SessionFactory
 from app.keyboards.common import admin_menu
 from app.services.access import disable_access, grant_paid_access, grant_subscription_access, grant_trial_access
+from app.services.admin_notifications import format_import_error_admin_text, format_import_success_admin_text, notify_admins
 from app.services.bot_settings import (
     ANALYSIS_PAYMENT_DETAILS_KEY,
     ANALYSIS_SPECIALIST_CONTACT_KEY,
@@ -645,6 +646,12 @@ async def receive_upload(message: Message, state: FSMContext) -> None:
         async with SessionFactory() as session:
             summary = await import_tournaments(session, destination, safe_name, message.from_user.id)
     except Exception as exc:
+        await notify_admins(
+            message.bot,
+            settings.admin_ids,
+            format_import_error_admin_text(safe_name, message.from_user.id, exc),
+            exclude_ids=[message.from_user.id],
+        )
         await message.answer(f"Ошибка обработки файла: {exc}")
         return
     finally:
@@ -667,7 +674,14 @@ async def receive_upload(message: Message, state: FSMContext) -> None:
     warning_text = format_import_warnings(summary.warnings)
     if warning_text:
         lines.extend(["", warning_text])
-    await message.answer("\n".join(lines), reply_markup=admin_menu())
+    result_text = "\n".join(lines)
+    await notify_admins(
+        message.bot,
+        settings.admin_ids,
+        format_import_success_admin_text(summary, safe_name, message.from_user.id),
+        exclude_ids=[message.from_user.id],
+    )
+    await message.answer(result_text, reply_markup=admin_menu())
 
 
 

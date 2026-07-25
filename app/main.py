@@ -27,7 +27,7 @@ async def main() -> None:
 
     background_tasks = [
         asyncio.create_task(signal_sender_loop(bot)),
-        asyncio.create_task(sqlite_backup_loop()),
+        asyncio.create_task(sqlite_backup_loop(bot)),
     ]
     try:
         await dispatcher.start_polling(bot)

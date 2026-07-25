@@ -13,6 +13,7 @@ from app.settings import get_settings
 from app.database.models import ScheduledSignal, SignalDelivery, User, UserAccess
 from app.database.session import SessionFactory
 from app.services.access import consume_signal_access, has_signal_access
+from app.services.admin_notifications import format_delivery_failure_admin_text, notify_admins
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,16 @@ async def signal_sender_loop(bot: Bot) -> None:
                         summary.failed_deliveries,
                         summary.skipped_users,
                     )
+                    if summary.failed_deliveries:
+                        await notify_admins(
+                            bot,
+                            settings.admin_ids,
+                            format_delivery_failure_admin_text(
+                                summary.processed_signals,
+                                summary.failed_deliveries,
+                                summary.sent_deliveries,
+                            ),
+                        )
         except asyncio.CancelledError:
             raise
         except Exception:

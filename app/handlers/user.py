@@ -15,6 +15,7 @@ from app.database.models import ImportBatch, Match, ScheduledSignal, SignalResul
 from app.database.session import SessionFactory
 from app.keyboards.common import main_menu
 from app.services.access import has_analytics_access, has_signal_access, ensure_trial_access
+from app.services.admin_notifications import notify_admins
 from app.services.bot_settings import get_analysis_payment_config
 from app.services.match_analysis import create_match_analysis_request, format_analysis_request_admin_text, format_analysis_request_user_text, validate_match_analysis_text
 from app.services.signal_results import format_winrate, result_short_label, summarize_results
@@ -402,11 +403,7 @@ async def subscription_plan_callback(callback: CallbackQuery) -> None:
 
     if callback.message:
         await callback.message.edit_text(user_text)
-    for admin_id in settings.admin_ids:
-        try:
-            await callback.bot.send_message(chat_id=admin_id, text=admin_text)
-        except Exception:
-            pass
+    await notify_admins(callback.bot, settings.admin_ids, admin_text)
     await callback.answer("Заявка создана", show_alert=True)
 
 
@@ -515,11 +512,7 @@ async def match_analysis_text_handler(message: Message, state: FSMContext) -> No
 
     await state.clear()
     await message.answer(user_text)
-    for admin_id in settings.admin_ids:
-        try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text)
-        except Exception:
-            continue
+    await notify_admins(message.bot, settings.admin_ids, admin_text)
 
 @router.message(F.text == "🧮 Калькулятор")
 async def calculator_handler(message: Message, state: FSMContext) -> None:
