@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, User
 from app.services.access import grant_trial_access
-from app.services.import_service import import_tournaments
+from app.services.import_service import import_tournaments, to_utc_naive
 from app.services.signal_sender import process_due_signals
 
 
@@ -19,6 +20,12 @@ class FakeBot:
 
     async def send_message(self, *, chat_id: int, text: str, **_: object) -> None:
         self.messages.append((chat_id, text))
+
+
+def test_to_utc_naive_converts_moscow_match_time_for_scheduler() -> None:
+    match_start = datetime(2026, 7, 25, 12, 30, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    assert to_utc_naive(match_start) == datetime(2026, 7, 25, 9, 30)
 
 
 @pytest.mark.asyncio

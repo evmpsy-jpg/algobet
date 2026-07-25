@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import Bot
 from sqlalchemy import select
@@ -16,6 +16,12 @@ from app.services.access import consume_signal_access, has_signal_access
 from app.services.admin_notifications import format_delivery_failure_admin_text, notify_admins
 
 logger = logging.getLogger(__name__)
+
+
+def to_utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 @dataclass(slots=True)
@@ -150,7 +156,7 @@ async def process_due_signals(
     now: datetime | None = None,
     admin_ids: list[int] | None = None,
 ) -> SenderSummary:
-    now = now or datetime.now().astimezone()
+    now = to_utc_naive(now or datetime.now(timezone.utc))
     now_utc = datetime.utcnow()
     admin_ids = get_settings().admin_ids if admin_ids is None else admin_ids
 

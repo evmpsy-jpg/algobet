@@ -29,7 +29,7 @@ from app.services.bot_settings import (
 )
 from app.services.decision_log import record_decision_log
 from app.services.excel_parser import ParsedMatch
-from app.services.import_service import import_tournaments
+from app.services.import_service import import_tournaments, to_utc_naive
 from app.services.match_analysis import format_analysis_status_user_text
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
@@ -988,7 +988,7 @@ async def signal_recalc_callback(callback: CallbackQuery) -> None:
         if decision.suitable:
             signal.status = "scheduled"
             lead_minutes = int(get_signal_rules()["signal"].get("lead_minutes", settings.signal_lead_minutes))
-            signal.send_at = match.match_start_at - timedelta(minutes=lead_minutes)
+            signal.send_at = to_utc_naive(match.match_start_at) - timedelta(minutes=lead_minutes)
             signal.signal_type = decision.signal_type
             signal.signal_payload = decision.payload or {}
             signal.message_text = build_signal_message(parsed, decision)

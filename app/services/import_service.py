@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import select, update
@@ -17,6 +17,12 @@ from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.match_normalizer import normalize_match
 from app.services.rules_config import get_signal_rules
 from app.services.signal_results import auto_set_signal_result
+
+
+def to_utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 @dataclass(slots=True)
@@ -90,7 +96,7 @@ async def import_tournaments(
                 source_url=parsed.source_url,
                 tournament_date=parsed.tournament_date,
                 match_time=parsed.match_time,
-                match_start_at=parsed.match_start_at,
+                match_start_at=to_utc_naive(parsed.match_start_at),
                 player_1=parsed.player_1,
                 player_2=parsed.player_2,
                 player_1_rating=parsed.player_1_rating,
@@ -108,7 +114,7 @@ async def import_tournaments(
             existing.source_url = parsed.source_url
             existing.tournament_date = parsed.tournament_date
             existing.match_time = parsed.match_time
-            existing.match_start_at = parsed.match_start_at
+            existing.match_start_at = to_utc_naive(parsed.match_start_at)
             existing.player_1 = parsed.player_1
             existing.player_2 = parsed.player_2
             existing.player_1_rating = parsed.player_1_rating
@@ -165,7 +171,7 @@ async def import_tournaments(
             group = str((decision.payload or {}).get("signal_group") or "unknown").strip().lower()
             scheduled_by_group[group if group in {"vip", "all"} else "unknown"] += 1
             lead_minutes = int(get_signal_rules()["signal"].get("lead_minutes", settings.signal_lead_minutes))
-            send_at = parsed.match_start_at - timedelta(minutes=lead_minutes)
+            send_at = to_utc_naive(parsed.match_start_at) - timedelta(minutes=lead_minutes)
             if signal is None:
                 signal = ScheduledSignal(match_id=existing.id, send_at=send_at)
                 session.add(signal)
