@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
 import hmac
+import secrets
 from dataclasses import dataclass
 import re
 from urllib.parse import parse_qs
@@ -18,7 +21,7 @@ from aiogram import Bot
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import desc, select
 
-from app.database.models import MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, WebAdminActionLog
+from app.database.models import MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, WebAdminActionLog, WebAdminUser
 from app.database.session import SessionFactory, init_db
 from app.services.access import disable_access, grant_subscription_access, grant_subscription_plan_access, grant_trial_access
 from app.services.signal_sender import process_delivery_now
@@ -82,24 +85,75 @@ def _auth_error() -> HTTPException:
     )
 
 
-def require_web_admin(credentials: Annotated[HTTPBasicCredentials | None, Depends(security)]) -> str:
-    configured_credentials = get_settings().web_admin_credentials
-    if not configured_credentials:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WEB_ADMIN_USERS or WEB_ADMIN_USERNAME/WEB_ADMIN_PASSWORD is not configured",
-        )
+WEB_ADMIN_PASSWORD_ITERATIONS = 210_000
+WEB_ADMIN_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,64}$")
 
+
+def hash_web_admin_password(password: str, *, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, WEB_ADMIN_PASSWORD_ITERATIONS)
+    return "$".join([
+        "pbkdf2_sha256",
+        str(WEB_ADMIN_PASSWORD_ITERATIONS),
+        base64.urlsafe_b64encode(salt).decode("ascii"),
+        base64.urlsafe_b64encode(digest).decode("ascii"),
+    ])
+
+
+def verify_web_admin_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_text, salt_text, digest_text = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
+        expected = base64.urlsafe_b64decode(digest_text.encode("ascii"))
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations_text))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(actual, expected)
+
+
+def verify_env_web_admin_credentials(credentials: HTTPBasicCredentials | None, configured_credentials: dict[str, str]) -> str | None:
     if credentials is None:
-        raise _auth_error()
-
+        return None
     expected_password = configured_credentials.get(credentials.username)
     if expected_password is None:
-        raise _auth_error()
-
+        return None
     if not hmac.compare_digest(credentials.password, expected_password):
-        raise _auth_error()
+        return None
     return credentials.username
+
+
+async def authenticate_web_admin(session, credentials: HTTPBasicCredentials | None) -> str | None:
+    if credentials is None:
+        return None
+
+    user = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == credentials.username))
+    if user is not None and user.is_active and verify_web_admin_password(credentials.password, user.password_hash):
+        user.last_login_at = datetime.utcnow()
+        user.updated_at = datetime.utcnow()
+        await session.commit()
+        return user.username
+
+    return verify_env_web_admin_credentials(credentials, get_settings().web_admin_credentials)
+
+
+async def has_any_web_admin_credentials(session) -> bool:
+    db_username = await session.scalar(select(WebAdminUser.username).where(WebAdminUser.is_active.is_(True)).limit(1))
+    return db_username is not None or bool(get_settings().web_admin_credentials)
+
+
+async def require_web_admin(credentials: Annotated[HTTPBasicCredentials | None, Depends(security)]) -> str:
+    async with SessionFactory() as session:
+        if not await has_any_web_admin_credentials(session):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WEB_ADMIN_USERS or active database web admin is not configured",
+            )
+        username = await authenticate_web_admin(session, credentials)
+    if username is None:
+        raise _auth_error()
+    return username
 
 
 def _token_href(path: str, token: str = "") -> str:
@@ -152,6 +206,10 @@ LABELS = {
     "settings_update": "Изменение настроек",
     "maintenance_backup_create": "Создание backup",
     "maintenance_backup_check": "Проверка backup",
+    "web_admin_create": "Создание web-админа",
+    "web_admin_password_update": "Смена пароля web-админа",
+    "web_admin_deactivate": "Отключение web-админа",
+    "web_admin": "Web-админ",
     "signal": "Сигнал",
     "subscription_request": "Заявка на подписку",
     "analysis_request": "Заявка на анализ",
@@ -443,6 +501,9 @@ class WebAdminActivityItem:
     last_action: str | None = None
     last_action_at: datetime | None = None
     actions_7d: int = 0
+    source: str = "WEB_ADMIN_USERS"
+    is_active: bool = True
+    last_login_at: datetime | None = None
 
 
 async def collect_web_admin_activity(session, configured_usernames: list[str]) -> list[WebAdminActivityItem]:
@@ -454,20 +515,45 @@ async def collect_web_admin_activity(session, configured_usernames: list[str]) -
             )
         ).all()
     )
-    usernames = list(dict.fromkeys([*configured_usernames, *(log.actor_username for log in logs if log.actor_username)]))
+    db_users = list((await session.scalars(select(WebAdminUser).order_by(WebAdminUser.username))).all())
+    db_by_name = {user.username: user for user in db_users}
+    env_usernames = set(configured_usernames)
+    usernames = list(dict.fromkeys([
+        *(user.username for user in db_users),
+        *configured_usernames,
+        *(log.actor_username for log in logs if log.actor_username),
+    ]))
     items: list[WebAdminActivityItem] = []
-    configured = set(configured_usernames)
     for username in usernames:
+        db_user = db_by_name.get(username)
         user_logs = [log for log in logs if log.actor_username == username]
         latest = user_logs[0] if user_logs else None
         actions_7d = sum(1 for log in user_logs if log.created_at and log.created_at >= since)
+        if db_user is not None:
+            source = "БД"
+            configured = bool(db_user.is_active)
+            is_active = bool(db_user.is_active)
+            last_login_at = db_user.last_login_at
+        elif username in env_usernames:
+            source = "Аварийный .env"
+            configured = True
+            is_active = True
+            last_login_at = None
+        else:
+            source = "Журнал"
+            configured = False
+            is_active = False
+            last_login_at = None
         items.append(
             WebAdminActivityItem(
                 username=username,
-                configured=username in configured,
+                configured=configured,
                 last_action=latest.action if latest is not None else None,
                 last_action_at=latest.created_at if latest is not None else None,
                 actions_7d=actions_7d,
+                source=source,
+                is_active=is_active,
+                last_login_at=last_login_at,
             )
         )
     return items
@@ -1168,28 +1254,74 @@ def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> st
     return _base_html("Мониторинг", body, token=token)
 
 
-def render_web_admins_html(items: list[WebAdminActivityItem], *, token: str = "") -> str:
+def _web_admin_row_actions(item: WebAdminActivityItem, current_username: str | None) -> str:
+    if item.source != "БД":
+        return '<span class="muted">Управляется вне админки</span>'
+    password_form = (
+        f'<form method="post" action="/admins/{escape(item.username)}/password" class="inline-form">'
+        '<input name="password" type="password" placeholder="Новый пароль" autocomplete="new-password" required minlength="12">'
+        '<button class="action-button" type="submit">Сменить пароль</button>'
+        '</form>'
+    )
+    if item.is_active and item.username != current_username:
+        deactivate_form = (
+            f'<form method="post" action="/admins/{escape(item.username)}/deactivate">'
+            '<button class="action-button danger" type="submit">Отключить</button>'
+            '</form>'
+        )
+    elif item.username == current_username:
+        deactivate_form = '<span class="muted">Свой доступ не отключаем</span>'
+    else:
+        deactivate_form = '<span class="muted">Отключен. Задайте новый пароль, чтобы включить.</span>'
+    return f'<div class="actions compact">{password_form}{deactivate_form}</div>'
+
+
+def render_web_admins_html(
+    items: list[WebAdminActivityItem],
+    *,
+    token: str = "",
+    current_username: str | None = None,
+    message: str = "",
+) -> str:
+    message_labels = {
+        "admin_saved": "Админ сохранен",
+        "password_saved": "Пароль обновлен",
+        "admin_disabled": "Админ отключен",
+    }
+    message_text = message_labels.get(message, message)
+    message_html = f'<p class="pill"><b>{escape(message_text)}</b></p>' if message_text else ""
     rows = "".join(
         f"""
         <tr>
           <td>{escape(item.username)}</td>
-          <td>{'Да' if item.configured else 'Нет, только в журнале'}</td>
+          <td>{'Активен' if item.configured else 'Нет, только в журнале'}</td>
+          <td>{escape(item.source)}</td>
+          <td>{_fmt_dt(item.last_login_at)}</td>
           <td>{escape(_label(item.last_action))}</td>
           <td>{_fmt_dt(item.last_action_at)}</td>
           <td>{item.actions_7d}</td>
+          <td>{_web_admin_row_actions(item, current_username)}</td>
         </tr>
         """
         for item in items
-    ) or '<tr><td colspan="5" class="muted">Web-админы не настроены.</td></tr>'
+    ) or '<tr><td colspan="8" class="muted">Web-админы не настроены.</td></tr>'
     body = f"""
-    <section><h2>Админы</h2>
-      <p class="muted">Пароли здесь не показываются. Страница отображает логины из WEB_ADMIN_USERS и активность из журнала действий.</p>
-      <table><thead><tr><th>Логин</th><th>Настроен сейчас</th><th>Последнее действие</th><th>Когда</th><th>Действий за 7 дней</th></tr></thead><tbody>{rows}</tbody></table>
+    <section><h2>Админы</h2>{message_html}
+      <p class="muted">Пароли здесь не показываются. Основные web-админы хранятся в базе данных, а WEB_ADMIN_USERS остается аварийным доступом через .env.</p>
+      <table><thead><tr><th>Логин</th><th>Статус</th><th>Источник</th><th>Последний вход</th><th>Последнее действие</th><th>Когда</th><th>Действий за 7 дней</th><th>Доступ</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
-    <section><h2>Как менять доступ</h2>
-      <p>Добавление, удаление и смена пароля web-админа выполняются на VPS в файле <code>/opt/algobet/.env</code>.</p>
-      <p>Используйте переменную <code>WEB_ADMIN_USERS</code> в формате <code>login:long_password,manager:second_long_password</code>. После изменения перезапустите сервисы командой <code>docker compose up -d --build</code>.</p>
-      <p class="muted">После спорных действий проверяйте <a href="{_token_href('/audit', token)}">Журнал</a>.</p>
+    <section><h2>Добавить админа</h2>
+      <form method="post" action="/admins" class="settings-form">
+        <label>Логин</label>
+        <input name="username" placeholder="manager" autocomplete="username" required minlength="3" maxlength="64">
+        <label>Пароль</label>
+        <input name="password" type="password" placeholder="Минимум 12 символов" autocomplete="new-password" required minlength="12">
+        <div class="actions"><button class="action-button" type="submit">Добавить админа</button></div>
+      </form>
+    </section>
+    <section><h2>Аварийный доступ</h2>
+      <p>Переменная <code>WEB_ADMIN_USERS</code> в <code>/opt/algobet/.env</code> остается запасным входом на случай проблем с БД.</p>
+      <p class="muted">Изменения админов из этой страницы пишутся в <a href="{_token_href('/audit', token)}">Журнал</a>.</p>
     </section>
     """
     return _base_html("Админы", body, token=token)
@@ -1260,6 +1392,96 @@ def render_settings_html(analysis_config: PaymentConfig, subscription_config: Pa
     </section>
     """
     return _base_html("Настройки", body, token=token)
+
+
+def validate_web_admin_username(username: str) -> str:
+    username = username.strip()
+    if not WEB_ADMIN_USERNAME_RE.fullmatch(username):
+        raise ValueError("Логин должен быть 3-64 символа: латиница, цифры, точка, дефис или подчеркивание")
+    return username
+
+
+def validate_web_admin_password(password: str) -> str:
+    if len(password) < 12:
+        raise ValueError("Пароль должен быть не короче 12 символов")
+    return password
+
+
+async def create_or_update_web_admin_user(session, username: str, password: str, *, actor_username: str) -> WebAdminUser:
+    username = validate_web_admin_username(username)
+    password = validate_web_admin_password(password)
+    user = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == username))
+    now = datetime.utcnow()
+    action = "web_admin_create"
+    if user is None:
+        user = WebAdminUser(
+            username=username,
+            password_hash=hash_web_admin_password(password),
+            is_active=True,
+            created_by=actor_username,
+            updated_by=actor_username,
+        )
+        session.add(user)
+    else:
+        user.password_hash = hash_web_admin_password(password)
+        user.is_active = True
+        user.updated_by = actor_username
+        user.updated_at = now
+        action = "web_admin_password_update"
+    await log_web_admin_action(
+        session,
+        actor_username=actor_username,
+        action=action,
+        target_type="web_admin",
+        target_id=username,
+        details={"username": username},
+    )
+    await session.commit()
+    return user
+
+
+async def update_web_admin_password(session, username: str, password: str, *, actor_username: str) -> bool:
+    username = validate_web_admin_username(username)
+    password = validate_web_admin_password(password)
+    user = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == username))
+    if user is None:
+        return False
+    user.password_hash = hash_web_admin_password(password)
+    user.is_active = True
+    user.updated_by = actor_username
+    user.updated_at = datetime.utcnow()
+    await log_web_admin_action(
+        session,
+        actor_username=actor_username,
+        action="web_admin_password_update",
+        target_type="web_admin",
+        target_id=username,
+        details={"username": username},
+    )
+    await session.commit()
+    return True
+
+
+async def deactivate_web_admin_user(session, username: str, *, actor_username: str) -> bool:
+    username = validate_web_admin_username(username)
+    if username == actor_username:
+        raise ValueError("Нельзя отключить свой текущий доступ")
+    user = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == username))
+    if user is None:
+        return False
+    user.is_active = False
+    user.updated_by = actor_username
+    user.updated_at = datetime.utcnow()
+    await log_web_admin_action(
+        session,
+        actor_username=actor_username,
+        action="web_admin_deactivate",
+        target_type="web_admin",
+        target_id=username,
+        details={"username": username},
+    )
+    await session.commit()
+    return True
 
 
 async def update_web_payment_settings(session, section: str, payment_details: str, specialist_contact: str, *, actor_username: str | None = None) -> None:
@@ -1439,11 +1661,53 @@ async def monitoring(_: Annotated[None, Depends(require_web_admin)], request: Re
 
 
 @app.get("/admins", response_class=HTMLResponse)
-async def web_admins(_: Annotated[str, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+async def web_admins(actor_username: Annotated[str, Depends(require_web_admin)], request: Request) -> HTMLResponse:
     settings = get_settings()
     async with SessionFactory() as session:
         items = await collect_web_admin_activity(session, list(settings.web_admin_credentials.keys()))
-    return HTMLResponse(render_web_admins_html(items, token=""))
+    message = request.query_params.get("message") or ""
+    return HTMLResponse(render_web_admins_html(items, token="", current_username=actor_username, message=message))
+
+
+@app.post("/admins")
+async def web_admin_create(request: Request, actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+    fields = await _read_form_fields(request)
+    try:
+        async with SessionFactory() as session:
+            await create_or_update_web_admin_user(
+                session,
+                fields.get("username", ""),
+                fields.get("password", ""),
+                actor_username=actor_username,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return RedirectResponse(url="/admins?message=admin_saved", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admins/{username}/password")
+async def web_admin_password_update(username: str, request: Request, actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+    fields = await _read_form_fields(request)
+    try:
+        async with SessionFactory() as session:
+            updated = await update_web_admin_password(session, username, fields.get("password", ""), actor_username=actor_username)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Web admin not found")
+    return RedirectResponse(url="/admins?message=password_saved", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admins/{username}/deactivate")
+async def web_admin_deactivate(username: str, actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+    try:
+        async with SessionFactory() as session:
+            updated = await deactivate_web_admin_user(session, username, actor_username=actor_username)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Web admin not found")
+    return RedirectResponse(url="/admins?message=admin_disabled", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/audit", response_class=HTMLResponse)

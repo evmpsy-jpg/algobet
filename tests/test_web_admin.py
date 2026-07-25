@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fastapi import HTTPException
 from fastapi.security import HTTPBasicCredentials
 
-from app.database.models import Base, Match, MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess, WebAdminActionLog
+from app.database.models import Base, Match, MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess, WebAdminActionLog, WebAdminUser
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
@@ -34,7 +34,11 @@ from app.services.sqlite_backup import BackupInfo, BackupVerification
 from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
     WebAdminActivityItem,
+    authenticate_web_admin,
     collect_web_admin_activity,
+    create_or_update_web_admin_user,
+    deactivate_web_admin_user,
+    hash_web_admin_password,
     log_web_admin_action,
     render_audit_csv,
     render_audit_html,
@@ -58,8 +62,10 @@ from app.web_admin import (
     render_user_detail_html,
     render_web_admins_html,
     render_users_html,
-    require_web_admin,
+    update_web_admin_password,
     update_web_payment_settings,
+    verify_env_web_admin_credentials,
+    verify_web_admin_password,
     update_web_request_status,
     update_web_signal_result,
     update_web_user_access,
@@ -549,17 +555,24 @@ def test_render_monitoring_html_shows_operational_summary() -> None:
 
 def test_render_web_admins_html_shows_configured_admins_without_passwords() -> None:
     html = render_web_admins_html([
-        WebAdminActivityItem("admin", True, "settings_update", datetime(2026, 7, 25, 9, 0), 3),
-        WebAdminActivityItem("old", False, "request_status_update", datetime(2026, 7, 24, 8, 0), 1),
-    ])
+        WebAdminActivityItem("admin", True, "settings_update", datetime(2026, 7, 25, 9, 0), 3, source="БД"),
+        WebAdminActivityItem("env", True, source="Аварийный .env"),
+        WebAdminActivityItem("old", False, "request_status_update", datetime(2026, 7, 24, 8, 0), 1, source="Журнал"),
+    ], current_username="admin", message="admin_saved")
 
     assert "Админы" in html
+    assert "Админ сохранен" in html
     assert "admin" in html
     assert "old" in html
     assert "Изменение настроек" in html
     assert "Нет, только в журнале" in html
+    assert "БД" in html
+    assert "Аварийный .env" in html
+    assert "Добавить админа" in html
+    assert "Сменить пароль" in html
+    assert "Свой доступ не отключаем" in html
+    assert "Управляется вне админки" in html
     assert "WEB_ADMIN_USERS" in html
-    assert "long_password" in html
     assert "secret" not in html
     assert "/admins" in html
 
@@ -588,6 +601,10 @@ async def test_collect_web_admin_activity_uses_configured_users_and_audit_logs()
         ])
         await session.commit()
 
+        session.add(WebAdminUser(username="dbadmin", password_hash=hash_web_admin_password("very-long-password"), is_active=True))
+        session.add(WebAdminUser(username="disabled", password_hash=hash_web_admin_password("very-long-password"), is_active=False))
+        await session.commit()
+
         items = await collect_web_admin_activity(session, ["admin", "manager"])
 
     await engine.dispose()
@@ -596,8 +613,12 @@ async def test_collect_web_admin_activity_uses_configured_users_and_audit_logs()
     assert by_name["admin"].configured is True
     assert by_name["admin"].last_action == "settings_update"
     assert by_name["admin"].actions_7d == 1
+    assert by_name["admin"].source == "Аварийный .env"
     assert by_name["manager"].configured is True
     assert by_name["manager"].last_action is None
+    assert by_name["dbadmin"].configured is True
+    assert by_name["dbadmin"].source == "БД"
+    assert by_name["disabled"].configured is False
     assert by_name["old"].configured is False
 
 
@@ -768,33 +789,77 @@ def test_render_maintenance_html_shows_storage_and_backup_settings() -> None:
     assert "/maintenance/backup" in html
 
 
-def test_require_web_admin_accepts_basic_credentials_for_multiple_admins(monkeypatch) -> None:
-    monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={"admin": "secret", "manager": "second"}))
+def test_verify_env_web_admin_credentials_accepts_multiple_admins() -> None:
+    configured = {"admin": "secret", "manager": "second"}
 
-    assert require_web_admin(HTTPBasicCredentials(username="admin", password="secret")) == "admin"
-    assert require_web_admin(HTTPBasicCredentials(username="manager", password="second")) == "manager"
-
-
-def test_require_web_admin_rejects_missing_or_wrong_credentials(monkeypatch) -> None:
-    monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={"admin": "secret", "manager": "second"}))
-
-    with pytest.raises(HTTPException) as missing_exc:
-        require_web_admin(None)
-    with pytest.raises(HTTPException) as wrong_exc:
-        require_web_admin(HTTPBasicCredentials(username="admin", password="bad"))
-
-    assert missing_exc.value.status_code == 401
-    assert missing_exc.value.headers == {"WWW-Authenticate": "Basic"}
-    assert wrong_exc.value.status_code == 401
+    assert verify_env_web_admin_credentials(HTTPBasicCredentials(username="admin", password="secret"), configured) == "admin"
+    assert verify_env_web_admin_credentials(HTTPBasicCredentials(username="manager", password="second"), configured) == "manager"
+    assert verify_env_web_admin_credentials(HTTPBasicCredentials(username="admin", password="bad"), configured) is None
+    assert verify_env_web_admin_credentials(None, configured) is None
 
 
-def test_require_web_admin_requires_configured_credentials(monkeypatch) -> None:
+def test_web_admin_password_hash_does_not_store_plain_password() -> None:
+    stored_hash = hash_web_admin_password("very-secret-password", salt=b"1234567890123456")
+
+    assert "very-secret-password" not in stored_hash
+    assert verify_web_admin_password("very-secret-password", stored_hash) is True
+    assert verify_web_admin_password("wrong-password", stored_hash) is False
+
+
+@pytest.mark.asyncio
+async def test_authenticate_web_admin_uses_database_user_and_updates_login(monkeypatch) -> None:
     monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={}))
+    engine, factory = await make_session()
+    async with factory() as session:
+        session.add(WebAdminUser(username="admin", password_hash=hash_web_admin_password("very-secret-password"), is_active=True))
+        await session.commit()
 
-    with pytest.raises(HTTPException) as exc:
-        require_web_admin(HTTPBasicCredentials(username="admin", password="secret"))
+        username = await authenticate_web_admin(session, HTTPBasicCredentials(username="admin", password="very-secret-password"))
+        user = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == "admin"))
 
-    assert exc.value.status_code == 503
+    await engine.dispose()
+
+    assert username == "admin"
+    assert user is not None
+    assert user.last_login_at is not None
+
+
+@pytest.mark.asyncio
+async def test_authenticate_web_admin_falls_back_to_env_credentials(monkeypatch) -> None:
+    monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={"root": "env-password"}))
+    engine, factory = await make_session()
+    async with factory() as session:
+        username = await authenticate_web_admin(session, HTTPBasicCredentials(username="root", password="env-password"))
+
+    await engine.dispose()
+
+    assert username == "root"
+
+
+@pytest.mark.asyncio
+async def test_manage_web_admin_users_create_password_and_deactivate() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        user = await create_or_update_web_admin_user(session, "manager", "very-secret-password", actor_username="root")
+        created_hash = user.password_hash
+
+        assert user.username == "manager"
+        assert user.is_active is True
+        assert verify_web_admin_password("very-secret-password", user.password_hash) is True
+
+        updated = await update_web_admin_password(session, "manager", "another-secret-password", actor_username="root")
+        refreshed = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == "manager"))
+        disabled = await deactivate_web_admin_user(session, "manager", actor_username="root")
+        logs = list((await session.scalars(select(WebAdminActionLog).order_by(WebAdminActionLog.id))).all())
+
+    await engine.dispose()
+
+    assert updated is True
+    assert disabled is True
+    assert refreshed is not None
+    assert refreshed.password_hash != created_hash
+    assert refreshed.is_active is False
+    assert [log.action for log in logs] == ["web_admin_create", "web_admin_password_update", "web_admin_deactivate"]
 
 
 async def make_session():
