@@ -130,6 +130,8 @@ def make_signal() -> SignalListItem:
         result_status="won",
         sent_deliveries=5,
         failed_deliveries=1,
+        match_start_at=datetime(2026, 7, 24, 12, 0),
+        lead_minutes=20,
     )
 
 
@@ -164,8 +166,8 @@ def test_render_signals_html_shows_filters_and_delivery_counts() -> None:
 def test_render_signals_csv_exports_rows() -> None:
     csv_text = render_signals_csv([make_signal()])
 
-    assert csv_text.splitlines()[0] == "id,status,send_at,signal_group,level,side,match,result,sent_deliveries,failed_deliveries"
-    assert "11,sent,24.07.2026 11:40,vip,TOP,1,Player <One> - Player Two,won,5,1" in csv_text
+    assert csv_text.splitlines()[0] == "id,status,send_at,match_start_at,lead_minutes,schedule_warning,signal_group,level,side,match,result,sent_deliveries,failed_deliveries"
+    assert "11,sent,24.07.2026 14:40,24.07.2026 15:00,20,,vip,TOP,1,Player <One> - Player Two,won,5,1" in csv_text
 
 
 def test_render_deliveries_html_shows_filters_and_errors() -> None:
@@ -215,7 +217,7 @@ def test_render_deliveries_csv_exports_rows() -> None:
     ])
 
     assert csv_text.splitlines()[0] == "id,signal_id,status,telegram_id,username,signal_group,match,time,error"
-    assert "5,11,failed,315715137,admin,vip,Player One - Player Two,24.07.2026 11:45,telegram unavailable" in csv_text
+    assert "5,11,failed,315715137,admin,vip,Player One - Player Two,24.07.2026 14:45,telegram unavailable" in csv_text
 
 
 def test_render_quality_html_shows_signal_result_statistics() -> None:
@@ -360,7 +362,7 @@ def test_render_subscriptions_csv_exports_rows() -> None:
     )
 
     assert csv_text.splitlines()[0] == "id,telegram_id,username,name,access_type,access_status,signals_remaining,free_signals_remaining,active_until,sent_deliveries,failed_deliveries"
-    assert "1,315715137,admin,Admin User,paid,active,9,0,30.07.2026 10:00,3,1" in csv_text
+    assert "1,315715137,admin,Admin User,paid,active,9,0,30.07.2026 13:00,3,1" in csv_text
 
 
 def test_render_requests_html_shows_subscription_and_analysis_items() -> None:
@@ -408,7 +410,7 @@ def test_render_requests_csv_exports_rows() -> None:
     )
 
     assert csv_text.splitlines()[0] == "kind,id,status,telegram_id,username,title,created_at"
-    assert "subscription,7,new,315715137,admin,VIP <99%>,24.07.2026 11:00" in csv_text
+    assert "subscription,7,new,315715137,admin,VIP <99%>,24.07.2026 14:00" in csv_text
 
 def test_render_signal_detail_html_shows_message_deliveries_and_trace() -> None:
     signal = make_signal()
@@ -663,7 +665,7 @@ def test_render_audit_csv_exports_rows() -> None:
     ])
 
     assert csv_text.splitlines()[0] == "created_at,actor_username,action,target_type,target_id,details"
-    assert "24.07.2026 11:00,admin,request_status_update,subscription_request,7" in csv_text
+    assert "24.07.2026 14:00,admin,request_status_update,subscription_request,7" in csv_text
     assert "old_status" in csv_text
 
 

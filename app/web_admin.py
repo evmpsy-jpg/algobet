@@ -10,7 +10,8 @@ import re
 from urllib.parse import parse_qs
 from io import StringIO
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from html import escape
 from pathlib import Path
 from typing import Annotated, AsyncIterator
@@ -500,10 +501,29 @@ def _fmt_counts(counts: dict[str, int]) -> str:
     )
 
 
-def _fmt_dt(value) -> str:
+def _local_dt(value: datetime | None) -> datetime | None:
     if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(ZoneInfo(get_settings().timezone))
+
+
+def _fmt_dt(value) -> str:
+    local = _local_dt(value)
+    if local is None:
         return "-"
-    return escape(value.strftime("%d.%m.%Y %H:%M"))
+    return escape(local.strftime("%d.%m.%Y %H:%M"))
+
+
+def _fmt_minutes(value: int | None) -> str:
+    return "-" if value is None else f"{value} мин"
+
+
+def _schedule_control_label(signal: SignalListItem) -> str:
+    if signal.schedule_warning:
+        return f'<span class="pill danger"><b>Внимание</b> {escape(signal.schedule_warning)}</span>'
+    return '<span class="pill"><b>OK</b></span>'
 
 
 def _user_name(user: UserListItem | RequestListItem) -> str:
@@ -638,6 +658,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     section {{ padding:16px; margin-bottom:18px; }}
     .pills {{ display:flex; flex-wrap:wrap; gap:8px; }}
     .pill {{ display:inline-flex; gap:7px; align-items:center; border:1px solid var(--line); border-radius:999px; padding:6px 10px; background:#fbfcfe; font-size:13px; }}
+    .pill.danger {{ border-color:#fecaca; background:#fef2f2; color:#991b1b; }}
     .health-list {{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }}
     .health-item {{ border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfcfe; }}
     .health-item strong {{ display:block; margin-bottom:5px; }}
@@ -689,6 +710,9 @@ def _signal_rows(signals: list[SignalListItem], *, token: str = "") -> str:
           <td><a href="{_token_href(f'/signals/{signal.id}', token)}">#{signal.id}</a></td>
           <td>{escape(_label(signal.status))}</td>
           <td>{_fmt_dt(signal.send_at)}</td>
+          <td>{_fmt_dt(signal.match_start_at)}</td>
+          <td>{_fmt_minutes(signal.lead_minutes)}</td>
+          <td>{_schedule_control_label(signal)}</td>
           <td>{escape(signal.signal_group.upper())}</td>
           <td class="optional">{escape(signal.level or '-')}</td>
           <td>P{signal.side or '-'}</td>
@@ -698,7 +722,7 @@ def _signal_rows(signals: list[SignalListItem], *, token: str = "") -> str:
         </tr>
         """
         for signal in signals
-    ) or '<tr><td colspan="9" class="muted">Сигналов пока нет.</td></tr>'
+    ) or '<tr><td colspan="12" class="muted">Сигналов пока нет.</td></tr>'
 
 
 def render_dashboard_html(summary: DashboardSummary, *, token: str = "") -> str:
@@ -728,6 +752,9 @@ def render_dashboard_html(summary: DashboardSummary, *, token: str = "") -> str:
             player_1=signal.player_1,
             player_2=signal.player_2,
             result_status=signal.result_status,
+            match_start_at=signal.match_start_at,
+            lead_minutes=signal.lead_minutes,
+            schedule_warning=signal.schedule_warning,
         )
         for signal in summary.recent_signals
     ]
@@ -746,7 +773,7 @@ def render_dashboard_html(summary: DashboardSummary, *, token: str = "") -> str:
     </div>
     <section>
       <h2>Последние сигналы</h2>
-      <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Матч</th><th>Результат</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{_signal_rows(recent_signals, token=token)}</tbody></table>
+      <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Отправлено / ошибки</th></tr></thead><tbody>{_signal_rows(recent_signals, token=token)}</tbody></table>
     </section>
     """
     return _base_html("Сводка", body, token=token)
@@ -785,7 +812,7 @@ def render_signals_html(
       <h2>Сигналы: {escape(_label(status_filter or 'all'))} · {escape(result_title)}</h2>
       <div class="filters">{status_filters}</div>
       <div class="filters">{result_filters}<a class="button" href="{_token_href(_signals_path(status_filter, result_filter, base='/signals/export.csv'), token)}">CSV</a></div>
-      <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Матч</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{_signal_rows(signals, token=token)}</tbody></table>
+      <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{_signal_rows(signals, token=token)}</tbody></table>
     </section>
     """
     return _base_html("Сигналы", body, token=token)
@@ -794,12 +821,15 @@ def render_signals_html(
 def render_signals_csv(signals: list[SignalListItem]) -> str:
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(["id", "status", "send_at", "signal_group", "level", "side", "match", "result", "sent_deliveries", "failed_deliveries"])
+    writer.writerow(["id", "status", "send_at", "match_start_at", "lead_minutes", "schedule_warning", "signal_group", "level", "side", "match", "result", "sent_deliveries", "failed_deliveries"])
     for signal in signals:
         writer.writerow([
             signal.id,
             signal.status,
             _fmt_dt(signal.send_at),
+            _fmt_dt(signal.match_start_at),
+            signal.lead_minutes if signal.lead_minutes is not None else "",
+            signal.schedule_warning or "",
             signal.signal_group,
             signal.level or "",
             signal.side or "",
@@ -1264,6 +1294,7 @@ def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> st
         """
         for log in summary.recent_admin_actions
     ) or '<tr><td colspan="5" class="muted">Действий пока нет.</td></tr>'
+    upcoming_rows = _signal_rows(summary.upcoming_signals, token=token)
     body = f"""
     <div class="grid">
       <div class="metric"><span>Очередь сигналов</span><strong>{dashboard.signals_by_status.get('scheduled', 0) + dashboard.signals_by_status.get('ready', 0)}</strong><div class="muted">готовых {dashboard.signals_by_status.get('ready', 0)}, просроченных {summary.overdue_signals}</div></div>
@@ -1273,6 +1304,7 @@ def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> st
     </div>
     <section><h2>Состояние системы</h2><div class="health-list">{_health_rows(summary.system_checks)}</div></section>
     <section><h2>Последняя загрузка</h2><p>{latest_import_html}</p></section>
+    <section><h2>Ближайшие отправки</h2><table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{upcoming_rows}</tbody></table></section>
     <section><h2>Последние ошибки доставки</h2><table><thead><tr><th>ID</th><th>Сигнал</th><th>ID Telegram</th><th>Матч</th><th>Время</th><th>Ошибка</th></tr></thead><tbody>{failed_rows}</tbody></table></section>
     <section><h2>Последние загрузки Excel</h2><table><thead><tr><th>ID</th><th>Файл</th><th>Статус</th><th>Разобрано / строк</th><th>Добавлено / обновлено / пропущено</th><th>Время</th><th>Ошибка</th></tr></thead><tbody>{import_rows}</tbody></table></section>
     <section><h2>Последние действия админов</h2><table><thead><tr><th>Время</th><th>Админ</th><th>Действие</th><th>Объект</th><th>ID</th></tr></thead><tbody>{action_rows}</tbody></table></section>

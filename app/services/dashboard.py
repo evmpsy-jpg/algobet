@@ -9,6 +9,7 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sqlite_backup import BackupInfo, latest_sqlite_backup, list_sqlite_backups, sqlite_database_path, verify_sqlite_backup
+from app.services.rules_config import get_signal_rules
 from app.services.signal_results import LEVEL_ORDER, ResultCounter, summarize_results
 from app.settings import get_settings
 from app.services.bot_settings import apply_system_runtime_settings, get_system_runtime_settings
@@ -67,6 +68,9 @@ class RecentSignalSummary:
     player_1: str
     player_2: str
     result_status: str | None
+    match_start_at: datetime | None = None
+    lead_minutes: int | None = None
+    schedule_warning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,9 @@ class SignalListItem:
     result_status: str | None
     sent_deliveries: int = 0
     failed_deliveries: int = 0
+    match_start_at: datetime | None = None
+    lead_minutes: int | None = None
+    schedule_warning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +241,7 @@ class MonitoringSummary:
     failed_deliveries: list[DeliveryListItem] = field(default_factory=list)
     recent_imports: list[ImportListItem] = field(default_factory=list)
     recent_admin_actions: list[WebAdminActionLog] = field(default_factory=list)
+    upcoming_signals: list[SignalListItem] = field(default_factory=list)
     system_checks: list[SystemHealthItem] = field(default_factory=list)
     overdue_signals: int = 0
 
@@ -311,6 +319,65 @@ async def _delivery_counts_by_user(session: AsyncSession, user_ids: list[int]) -
     for user_id, status, value in rows:
         counts.setdefault(int(user_id), {})[str(status or "unknown")] = int(value or 0)
     return counts
+
+
+def expected_signal_lead_minutes(settings: Any | None = None) -> int:
+    settings = settings or get_settings()
+    return int(get_signal_rules()["signal"].get("lead_minutes", settings.signal_lead_minutes))
+
+
+def signal_schedule_lead_minutes(signal: ScheduledSignal, match: Match) -> int | None:
+    if signal.send_at is None or match.match_start_at is None:
+        return None
+    return int(round((match.match_start_at - signal.send_at).total_seconds() / 60))
+
+
+def signal_schedule_warning(
+    signal: ScheduledSignal,
+    match: Match,
+    *,
+    expected_lead_minutes: int,
+    now: datetime | None = None,
+) -> str | None:
+    lead_minutes = signal_schedule_lead_minutes(signal, match)
+    if lead_minutes is None:
+        return "нет времени матча"
+    if lead_minutes <= 0:
+        return "отправка позже или в момент матча"
+    if signal.status in {"scheduled", "ready"} and signal.send_at < (now or datetime.utcnow()):
+        return "просрочен"
+    if abs(lead_minutes - expected_lead_minutes) > 1:
+        return f"ожидалось {expected_lead_minutes} мин"
+    return None
+
+
+def build_signal_list_item(
+    signal: ScheduledSignal,
+    match: Match,
+    result: SignalResult | None,
+    *,
+    delivery_counts: dict[int, dict[str, int]] | None = None,
+    expected_lead_minutes: int | None = None,
+    now: datetime | None = None,
+) -> SignalListItem:
+    delivery_counts = delivery_counts or {}
+    expected = expected_lead_minutes if expected_lead_minutes is not None else expected_signal_lead_minutes()
+    return SignalListItem(
+        id=signal.id,
+        status=signal.status,
+        send_at=signal.send_at,
+        signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
+        level=(signal.signal_payload or {}).get("level"),
+        side=(signal.signal_payload or {}).get("side"),
+        player_1=match.player_1,
+        player_2=match.player_2,
+        result_status=result.status if result is not None else None,
+        sent_deliveries=delivery_counts.get(signal.id, {}).get("sent", 0),
+        failed_deliveries=delivery_counts.get(signal.id, {}).get("failed", 0),
+        match_start_at=match.match_start_at,
+        lead_minutes=signal_schedule_lead_minutes(signal, match),
+        schedule_warning=signal_schedule_warning(signal, match, expected_lead_minutes=expected, now=now),
+    )
 
 
 def directory_size_bytes(path: Path) -> int:
@@ -454,6 +521,7 @@ async def collect_dashboard_summary(session: AsyncSession, *, recent_limit: int 
             .limit(recent_limit)
         )
     ).all()
+    expected_lead = expected_signal_lead_minutes()
     recent_signals = [
         RecentSignalSummary(
             id=signal.id,
@@ -465,6 +533,9 @@ async def collect_dashboard_summary(session: AsyncSession, *, recent_limit: int 
             player_1=match.player_1,
             player_2=match.player_2,
             result_status=result.status if result is not None else None,
+            match_start_at=match.match_start_at,
+            lead_minutes=signal_schedule_lead_minutes(signal, match),
+            schedule_warning=signal_schedule_warning(signal, match, expected_lead_minutes=expected_lead),
         )
         for signal, match, result in recent_rows
     ]
@@ -595,6 +666,7 @@ async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10, 
             )
         ).all()
     )
+    upcoming_signals = await collect_upcoming_signal_list(session, limit=limit, settings=settings)
     system_checks = build_system_health_checks(
         dashboard,
         recent_imports,
@@ -607,6 +679,7 @@ async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10, 
         failed_deliveries=failed_deliveries,
         recent_imports=recent_imports,
         recent_admin_actions=recent_admin_actions,
+        upcoming_signals=upcoming_signals,
         system_checks=system_checks,
         overdue_signals=overdue_signals,
     )
@@ -636,19 +709,49 @@ async def collect_signal_list(
     signal_ids = [signal.id for signal, _, _ in rows]
     delivery_counts = await _delivery_counts_by_signal(session, signal_ids)
 
+    expected_lead = expected_signal_lead_minutes()
+    now = datetime.utcnow()
     return [
-        SignalListItem(
-            id=signal.id,
-            status=signal.status,
-            send_at=signal.send_at,
-            signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
-            level=(signal.signal_payload or {}).get("level"),
-            side=(signal.signal_payload or {}).get("side"),
-            player_1=match.player_1,
-            player_2=match.player_2,
-            result_status=result.status if result is not None else None,
-            sent_deliveries=delivery_counts.get(signal.id, {}).get("sent", 0),
-            failed_deliveries=delivery_counts.get(signal.id, {}).get("failed", 0),
+        build_signal_list_item(
+            signal,
+            match,
+            result,
+            delivery_counts=delivery_counts,
+            expected_lead_minutes=expected_lead,
+            now=now,
+        )
+        for signal, match, result in rows
+    ]
+
+
+async def collect_upcoming_signal_list(
+    session: AsyncSession,
+    *,
+    limit: int = 10,
+    settings: Any | None = None,
+) -> list[SignalListItem]:
+    now = datetime.utcnow()
+    rows = (
+        await session.execute(
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.status.in_(["scheduled", "ready"]))
+            .order_by(ScheduledSignal.send_at.asc())
+            .limit(limit)
+        )
+    ).all()
+    signal_ids = [signal.id for signal, _, _ in rows]
+    delivery_counts = await _delivery_counts_by_signal(session, signal_ids)
+    expected_lead = expected_signal_lead_minutes(settings)
+    return [
+        build_signal_list_item(
+            signal,
+            match,
+            result,
+            delivery_counts=delivery_counts,
+            expected_lead_minutes=expected_lead,
+            now=now,
         )
         for signal, match, result in rows
     ]
@@ -801,19 +904,7 @@ async def collect_signal_detail(session: AsyncSession, signal_id: int) -> Signal
 
     signal, match, result = row
     delivery_counts = await _delivery_counts_by_signal(session, [signal.id])
-    item = SignalListItem(
-        id=signal.id,
-        status=signal.status,
-        send_at=signal.send_at,
-        signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
-        level=(signal.signal_payload or {}).get("level"),
-        side=(signal.signal_payload or {}).get("side"),
-        player_1=match.player_1,
-        player_2=match.player_2,
-        result_status=result.status if result is not None else None,
-        sent_deliveries=delivery_counts.get(signal.id, {}).get("sent", 0),
-        failed_deliveries=delivery_counts.get(signal.id, {}).get("failed", 0),
-    )
+    item = build_signal_list_item(signal, match, result, delivery_counts=delivery_counts)
     delivery_rows = (
         await session.execute(
             select(SignalDelivery, User)
