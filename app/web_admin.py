@@ -330,6 +330,28 @@ def _signals_path(
     return base + ("?" + "&".join(params) if params else "")
 
 
+def _import_path(
+    import_id: int,
+    *,
+    status_filter: str | None = None,
+    group_filter: str | None = None,
+    schedule_filter: str | None = None,
+    limit: int | None = None,
+    base_suffix: str = "",
+) -> str:
+    params = []
+    if status_filter:
+        params.append(f"status={status_filter}")
+    if group_filter:
+        params.append(f"group={group_filter}")
+    if schedule_filter:
+        params.append(f"schedule={schedule_filter}")
+    if limit:
+        params.append(f"limit={limit}")
+    base = f"/imports/{import_id}{base_suffix}"
+    return base + ("?" + "&".join(params) if params else "")
+
+
 def _signal_result_buttons(signal_id: int, current_status: str | None) -> str:
     buttons = []
     for next_status in SIGNAL_RESULT_WEB_STATUSES:
@@ -1288,6 +1310,23 @@ def render_import_detail_html(detail: ImportDetail, *, token: str = "") -> str:
         signal_counts[signal.status] = signal_counts.get(signal.status, 0) + 1
         group_counts[signal.signal_group] = group_counts.get(signal.signal_group, 0) + 1
     warning_rows = _signal_rows(detail.schedule_warnings, token=token)
+    status_filters = "".join(
+        f'<a class="button" href="{_token_href(_import_path(batch.id, status_filter=status, group_filter=detail.group_filter, schedule_filter=detail.schedule_filter, limit=detail.limit), token)}">{label}</a>'
+        for label, status in [("Все", None), ("Запланировано", "scheduled"), ("Готово", "ready"), ("Отправлено", "sent"), ("Отменено", "cancelled")]
+    )
+    group_filters = "".join(
+        f'<a class="button" href="{_token_href(_import_path(batch.id, status_filter=detail.status_filter, group_filter=group, schedule_filter=detail.schedule_filter, limit=detail.limit), token)}">{label}</a>'
+        for label, group in [("Все группы", None), ("VIP", "vip"), ("ALL", "all"), ("Без типа", "unknown")]
+    )
+    schedule_filters = "".join(
+        f'<a class="button" href="{_token_href(_import_path(batch.id, status_filter=detail.status_filter, group_filter=detail.group_filter, schedule_filter=schedule, limit=detail.limit), token)}">{label}</a>'
+        for label, schedule in [("Все расписание", None), ("Только проблемы", "problem")]
+    )
+    limit_filters = "".join(
+        f'<a class="button" href="{_token_href(_import_path(batch.id, status_filter=detail.status_filter, group_filter=detail.group_filter, schedule_filter=detail.schedule_filter, limit=value), token)}">{value}</a>'
+        for value in [50, 100, 250, 1000]
+    )
+    csv_href = _token_href(_import_path(batch.id, status_filter=detail.status_filter, group_filter=detail.group_filter, schedule_filter=detail.schedule_filter, limit=detail.limit, base_suffix="/signals.csv"), token)
     body = f"""
     <section><h2>Импорт #{batch.id}</h2>
       <dl class="details">
@@ -1300,12 +1339,14 @@ def render_import_detail_html(detail: ImportDetail, *, token: str = "") -> str:
         <dt>Ошибка</dt><dd>{escape(batch.error_text or '-')}</dd>
       </dl>
       <div class="pills">
-        <span class="pill"><b>Сигналов</b> {len(detail.signals)}</span>
+        <span class="pill"><b>Сигналов всего</b> {detail.total_signals}</span>
+        <span class="pill"><b>Показано</b> {len(detail.signals)} из {detail.filtered_signals}</span>
         <span class="pill"><b>Проблем расписания</b> {len(detail.schedule_warnings)}</span>
         <span class="pill"><b>Принято правилом</b> {detail.decision_counts.get('accepted', 0)}</span>
         <span class="pill"><b>Отклонено правилом</b> {detail.decision_counts.get('rejected', 0)}</span>
       </div>
     </section>
+    <section><h2>Фильтры сигналов</h2><div class="filters">{status_filters}</div><div class="filters">{group_filters}</div><div class="filters">{schedule_filters}</div><div class="filters">Показать: {limit_filters}<a class="button" href="{csv_href}">CSV</a></div></section>
     <section><h2>Статусы сигналов</h2><div class="pills">{_fmt_counts(signal_counts)}{_fmt_counts(group_counts)}</div></section>
     <section><h2>Проблемы расписания</h2><table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{warning_rows}</tbody></table></section>
     <section><h2>Сигналы загрузки</h2><table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{_signal_rows(detail.signals, token=token)}</tbody></table></section>
@@ -2101,13 +2142,61 @@ async def signals_export(_: Annotated[None, Depends(require_web_admin)], request
     )
 
 
+def _import_query_filters(request: Request) -> tuple[str | None, str | None, str | None, int]:
+    status_filter = request.query_params.get("status") or None
+    group_filter = request.query_params.get("group") or None
+    schedule_filter = request.query_params.get("schedule") or None
+    if status_filter not in {"scheduled", "ready", "sent", "cancelled"}:
+        status_filter = None
+    if group_filter not in {"vip", "all", "unknown"}:
+        group_filter = None
+    if schedule_filter not in SIGNAL_SCHEDULE_FILTER_LABELS:
+        schedule_filter = None
+    try:
+        limit = int(request.query_params.get("limit") or 100)
+    except ValueError:
+        limit = 100
+    limit = min(max(limit, 1), 10000)
+    return status_filter, group_filter, schedule_filter, limit
+
+
 @app.get("/imports/{import_id}", response_class=HTMLResponse)
 async def import_detail(_: Annotated[None, Depends(require_web_admin)], request: Request, import_id: int) -> HTMLResponse:
+    status_filter, group_filter, schedule_filter, limit = _import_query_filters(request)
     async with SessionFactory() as session:
-        detail = await collect_import_detail(session, import_id)
+        detail = await collect_import_detail(
+            session,
+            import_id,
+            status_filter=status_filter,
+            group_filter=group_filter,
+            schedule_filter=schedule_filter,
+            limit=limit,
+        )
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
     return HTMLResponse(render_import_detail_html(detail, token=""))
+
+
+@app.get("/imports/{import_id}/signals.csv")
+async def import_signals_export(_: Annotated[None, Depends(require_web_admin)], request: Request, import_id: int) -> Response:
+    status_filter, group_filter, schedule_filter, limit = _import_query_filters(request)
+    async with SessionFactory() as session:
+        detail = await collect_import_detail(
+            session,
+            import_id,
+            status_filter=status_filter,
+            group_filter=group_filter,
+            schedule_filter=schedule_filter,
+            limit=limit,
+        )
+    if detail is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
+    content = render_signals_csv(detail.signals)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=algobet-import-{import_id}-signals.csv"},
+    )
 
 
 @app.get("/deliveries", response_class=HTMLResponse)

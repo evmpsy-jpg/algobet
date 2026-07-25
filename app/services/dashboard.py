@@ -241,6 +241,12 @@ class ImportDetail:
     schedule_warnings: list[SignalListItem] = field(default_factory=list)
     decision_counts: dict[str, int] = field(default_factory=dict)
     rejection_reasons: list[ImportDecisionReason] = field(default_factory=list)
+    total_signals: int = 0
+    filtered_signals: int = 0
+    status_filter: str | None = None
+    group_filter: str | None = None
+    schedule_filter: str | None = None
+    limit: int = 100
 
 
 @dataclass(frozen=True)
@@ -813,25 +819,34 @@ async def collect_upcoming_signal_list(
     ]
 
 
-async def collect_import_detail(session: AsyncSession, import_batch_id: int) -> ImportDetail | None:
+async def collect_import_detail(
+    session: AsyncSession,
+    import_batch_id: int,
+    *,
+    status_filter: str | None = None,
+    group_filter: str | None = None,
+    schedule_filter: str | None = None,
+    limit: int = 100,
+) -> ImportDetail | None:
     batch = await session.get(ImportBatch, import_batch_id)
     if batch is None:
         return None
 
-    rows = (
-        await session.execute(
-            select(ScheduledSignal, Match, SignalResult)
-            .join(Match, Match.id == ScheduledSignal.match_id)
-            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
-            .where(ScheduledSignal.source_import_id == import_batch_id)
-            .order_by(ScheduledSignal.send_at.asc())
-        )
-    ).all()
+    base_query = (
+        select(ScheduledSignal, Match, SignalResult)
+        .join(Match, Match.id == ScheduledSignal.match_id)
+        .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+        .where(ScheduledSignal.source_import_id == import_batch_id)
+        .order_by(ScheduledSignal.send_at.asc())
+    )
+    if status_filter:
+        base_query = base_query.where(ScheduledSignal.status == status_filter)
+    rows = (await session.execute(base_query)).all()
     signal_ids = [signal.id for signal, _, _ in rows]
     delivery_counts = await _delivery_counts_by_signal(session, signal_ids)
     expected_lead = expected_signal_lead_minutes()
     now = datetime.utcnow()
-    signals = [
+    all_signals = [
         build_signal_list_item(
             signal,
             match,
@@ -842,6 +857,13 @@ async def collect_import_detail(session: AsyncSession, import_batch_id: int) -> 
         )
         for signal, match, result in rows
     ]
+    signals = all_signals
+    if group_filter:
+        signals = [item for item in signals if item.signal_group == group_filter]
+    if schedule_filter == "problem":
+        signals = [item for item in signals if item.schedule_warning]
+    filtered_signals = len(signals)
+    signals = signals[:max(1, int(limit))]
 
     decision_rows = (
         await session.execute(
@@ -868,9 +890,15 @@ async def collect_import_detail(session: AsyncSession, import_batch_id: int) -> 
     return ImportDetail(
         batch=import_list_item_from_batch(batch),
         signals=signals,
-        schedule_warnings=[item for item in signals if item.schedule_warning],
+        schedule_warnings=[item for item in all_signals if item.schedule_warning],
         decision_counts=dict(decision_counts),
         rejection_reasons=rejection_reasons,
+        total_signals=len(all_signals),
+        filtered_signals=filtered_signals,
+        status_filter=status_filter,
+        group_filter=group_filter,
+        schedule_filter=schedule_filter,
+        limit=max(1, int(limit)),
     )
 
 

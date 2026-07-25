@@ -324,6 +324,8 @@ async def test_schedule_problem_filter_and_import_warnings() -> None:
         problem_signals = await collect_signal_list(session, schedule_filter="problem")
         import_warnings = await collect_import_signal_schedule_warnings(session, batch.id)
         import_detail = await collect_import_detail(session, batch.id)
+        vip_detail = await collect_import_detail(session, batch.id, group_filter="vip")
+        problem_detail = await collect_import_detail(session, batch.id, schedule_filter="problem")
 
     await engine.dispose()
 
@@ -336,7 +338,13 @@ async def test_schedule_problem_filter_and_import_warnings() -> None:
     assert len(import_detail.signals) == 2
     assert [item.player_1 for item in import_detail.schedule_warnings] == ["Bad Player"]
     assert import_detail.decision_counts == {"accepted": 1, "rejected": 1}
+    assert import_detail.total_signals == 2
+    assert import_detail.filtered_signals == 2
     assert [(item.reason, item.count) for item in import_detail.rejection_reasons] == [("Недостаточно игр", 1)]
+    assert vip_detail is not None
+    assert [item.player_1 for item in vip_detail.signals] == ["OK Player"]
+    assert problem_detail is not None
+    assert [item.player_1 for item in problem_detail.signals] == ["Bad Player"]
 
 
 @pytest.mark.asyncio

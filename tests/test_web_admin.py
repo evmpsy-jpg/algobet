@@ -555,6 +555,12 @@ def test_render_import_detail_html_shows_signals_and_rejections() -> None:
         schedule_warnings=[problem],
         decision_counts={"accepted": 2, "rejected": 3},
         rejection_reasons=[ImportDecisionReason("Недостаточно игр", 3)],
+        total_signals=2,
+        filtered_signals=2,
+        status_filter="scheduled",
+        group_filter="all",
+        schedule_filter="problem",
+        limit=50,
     )
 
     html = render_import_detail_html(detail, token="secret")
@@ -562,6 +568,9 @@ def test_render_import_detail_html_shows_signals_and_rejections() -> None:
     assert "Импорт #2" in html
     assert "ЛЕТО.xlsx" in html
     assert "Проблем расписания" in html
+    assert "Показано" in html
+    assert "/imports/2?status=scheduled&group=all&schedule=problem&limit=100" in html
+    assert "/imports/2/signals.csv?status=scheduled&group=all&schedule=problem&limit=50" in html
     assert "Problem Player" in html
     assert "ожидалось 20 мин" in html
     assert "Недостаточно игр" in html
