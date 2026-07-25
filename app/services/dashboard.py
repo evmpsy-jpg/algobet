@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sqlite_backup import BackupInfo, latest_sqlite_backup, list_sqlite_backups, sqlite_database_path
+from app.services.sqlite_backup import BackupInfo, latest_sqlite_backup, list_sqlite_backups, sqlite_database_path, verify_sqlite_backup
 from app.services.signal_results import LEVEL_ORDER, ResultCounter, summarize_results
+from app.settings import get_settings
 from app.database.models import (
     ImportBatch,
     Match,
@@ -219,11 +220,21 @@ class ImportListItem:
 
 
 @dataclass(frozen=True)
+class SystemHealthItem:
+    status: str
+    title: str
+    message: str
+    details: str = ""
+
+
+@dataclass(frozen=True)
 class MonitoringSummary:
     dashboard: "DashboardSummary"
     failed_deliveries: list[DeliveryListItem] = field(default_factory=list)
     recent_imports: list[ImportListItem] = field(default_factory=list)
     recent_admin_actions: list[WebAdminActionLog] = field(default_factory=list)
+    system_checks: list[SystemHealthItem] = field(default_factory=list)
+    overdue_signals: int = 0
 
 
 @dataclass(frozen=True)
@@ -490,9 +501,71 @@ async def collect_dashboard_summary(session: AsyncSession, *, recent_limit: int 
     )
 
 
-async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10) -> MonitoringSummary:
+def build_system_health_checks(
+    dashboard: DashboardSummary,
+    recent_imports: list[ImportListItem],
+    *,
+    failed_delivery_count: int,
+    overdue_signals: int,
+    settings: Any,
+) -> list[SystemHealthItem]:
+    checks: list[SystemHealthItem] = []
+
+    if failed_delivery_count:
+        checks.append(SystemHealthItem("problem", "Доставки", f"Есть ошибки доставки: {failed_delivery_count}", "Откройте раздел Доставки -> Ошибка."))
+    else:
+        checks.append(SystemHealthItem("ok", "Доставки", "Ошибок доставки нет."))
+
+    if overdue_signals:
+        checks.append(SystemHealthItem("problem", "Очередь сигналов", f"Просроченных сигналов: {overdue_signals}", "Проверьте фонового отправителя и готовые сигналы."))
+    else:
+        checks.append(SystemHealthItem("ok", "Очередь сигналов", "Просроченных сигналов нет."))
+
+    latest_import = recent_imports[0] if recent_imports else None
+    if latest_import is None:
+        checks.append(SystemHealthItem("warning", "Импорт", "Загрузок пока нет.", "Загрузите Excel через Telegram-админку."))
+    elif latest_import.status == "failed" or latest_import.error_text:
+        checks.append(SystemHealthItem("problem", "Импорт", f"Последняя загрузка требует внимания: {latest_import.file_name}", latest_import.error_text or latest_import.status))
+    else:
+        checks.append(SystemHealthItem("ok", "Импорт", f"Последняя загрузка успешна: {latest_import.file_name}"))
+
+    open_requests = dashboard.open_subscription_requests + dashboard.open_analysis_requests
+    if open_requests:
+        checks.append(SystemHealthItem("warning", "Заявки", f"Новых заявок: {open_requests}", f"Подписки: {dashboard.open_subscription_requests}, анализ: {dashboard.open_analysis_requests}."))
+    else:
+        checks.append(SystemHealthItem("ok", "Заявки", "Новых заявок нет."))
+
+    backups = list_sqlite_backups(settings.data_dir)
+    if not getattr(settings, "sqlite_backup_enabled", False):
+        checks.append(SystemHealthItem("warning", "Backup", "Авто-backup выключен."))
+    elif not backups:
+        checks.append(SystemHealthItem("warning", "Backup", "Backup-копий пока нет.", "Создайте backup в разделе Обслуживание."))
+    else:
+        latest_backup = backups[0]
+        max_age = timedelta(hours=max(1, int(settings.sqlite_backup_interval_hours)) * 2)
+        backup_age = datetime.now() - latest_backup.created_at
+        verification = verify_sqlite_backup(latest_backup.path)
+        if not verification.ok:
+            checks.append(SystemHealthItem("problem", "Backup", "Последний backup не прошел проверку.", verification.message))
+        elif backup_age > max_age:
+            checks.append(SystemHealthItem("warning", "Backup", f"Последний backup старше {int(max_age.total_seconds() // 3600)} ч.", latest_backup.path.name))
+        else:
+            checks.append(SystemHealthItem("ok", "Backup", "Последний backup читается.", latest_backup.path.name))
+
+    return checks
+
+
+async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10, settings: Any | None = None) -> MonitoringSummary:
+    settings = settings or get_settings()
     dashboard = await collect_dashboard_summary(session, recent_limit=limit)
     failed_deliveries = await collect_delivery_list(session, status_filter="failed", limit=limit)
+    now = datetime.utcnow()
+    overdue_signals = await _count(
+        session,
+        select(func.count(ScheduledSignal.id))
+        .where(ScheduledSignal.status.in_(["scheduled", "ready"]))
+        .where(ScheduledSignal.send_at < now),
+    )
     import_rows = (
         await session.scalars(select(ImportBatch).order_by(desc(ImportBatch.id)).limit(limit))
     ).all()
@@ -519,11 +592,20 @@ async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10) 
             )
         ).all()
     )
+    system_checks = build_system_health_checks(
+        dashboard,
+        recent_imports,
+        failed_delivery_count=dashboard.deliveries_by_status.get("failed", 0),
+        overdue_signals=overdue_signals,
+        settings=settings,
+    )
     return MonitoringSummary(
         dashboard=dashboard,
         failed_deliveries=failed_deliveries,
         recent_imports=recent_imports,
         recent_admin_actions=recent_admin_actions,
+        system_checks=system_checks,
+        overdue_signals=overdue_signals,
     )
 
 

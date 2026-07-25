@@ -38,6 +38,7 @@ from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
     MonitoringSummary,
+    SystemHealthItem,
     QualityStatsItem,
     QualitySummary,
     RequestDetail,
@@ -486,6 +487,13 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     section {{ padding:16px; margin-bottom:18px; }}
     .pills {{ display:flex; flex-wrap:wrap; gap:8px; }}
     .pill {{ display:inline-flex; gap:7px; align-items:center; border:1px solid var(--line); border-radius:999px; padding:6px 10px; background:#fbfcfe; font-size:13px; }}
+    .health-list {{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }}
+    .health-item {{ border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfcfe; }}
+    .health-item strong {{ display:block; margin-bottom:5px; }}
+    .health-status {{ display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border-radius:999px; font-size:12px; font-weight:700; margin-bottom:8px; }}
+    .health-ok .health-status {{ background:#dcfce7; color:#166534; }}
+    .health-warning .health-status {{ background:#fef3c7; color:#92400e; }}
+    .health-problem .health-status {{ background:#fee2e2; color:#991b1b; }}
     .details {{ display:grid; grid-template-columns:140px 1fr; gap:8px 12px; margin:0; }}
     dt {{ color:var(--muted); }} dd {{ margin:0; }}
     table {{ width:100%; border-collapse:collapse; font-size:14px; }}
@@ -505,7 +513,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .doc-page code {{ padding:2px 5px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:4px; }}
     .doc-page a {{ color:var(--accent); font-weight:700; }}
     @media (max-width:900px) {{ .grid,.sections {{ grid-template-columns:1fr 1fr; }} }}
-    @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections {{ grid-template-columns:1fr; }} table {{ font-size:13px; }} th.optional,td.optional {{ display:none; }} }}
+    @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections,.health-list {{ grid-template-columns:1fr; }} table {{ font-size:13px; }} th.optional,td.optional {{ display:none; }} }}
   </style>
 </head>
 <body>
@@ -1040,6 +1048,24 @@ def render_request_detail_html(detail: RequestDetail, *, token: str = "") -> str
     return _base_html(f"Заявка #{item.id}", body, token=token)
 
 
+def _health_label(status_value: str) -> str:
+    return {"ok": "OK", "warning": "Внимание", "problem": "Проблема"}.get(status_value, status_value)
+
+
+def _health_rows(items: list[SystemHealthItem]) -> str:
+    return "".join(
+        f"""
+        <div class="health-item health-{escape(item.status)}">
+          <span class="health-status">{escape(_health_label(item.status))}</span>
+          <strong>{escape(item.title)}</strong>
+          <div>{escape(item.message)}</div>
+          <div class="muted">{escape(item.details or '-')}</div>
+        </div>
+        """
+        for item in items
+    ) or '<p class="muted">Проверок пока нет.</p>'
+
+
 def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> str:
     dashboard = summary.dashboard
     latest = dashboard.latest_import
@@ -1089,11 +1115,12 @@ def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> st
     ) or '<tr><td colspan="5" class="muted">Действий пока нет.</td></tr>'
     body = f"""
     <div class="grid">
-      <div class="metric"><span>Очередь сигналов</span><strong>{dashboard.signals_by_status.get('scheduled', 0) + dashboard.signals_by_status.get('ready', 0)}</strong><div class="muted">готовых {dashboard.signals_by_status.get('ready', 0)}</div></div>
+      <div class="metric"><span>Очередь сигналов</span><strong>{dashboard.signals_by_status.get('scheduled', 0) + dashboard.signals_by_status.get('ready', 0)}</strong><div class="muted">готовых {dashboard.signals_by_status.get('ready', 0)}, просроченных {summary.overdue_signals}</div></div>
       <div class="metric"><span>Ошибки доставки</span><strong>{dashboard.deliveries_by_status.get('failed', 0)}</strong><div class="muted">всего доставок {dashboard.deliveries_total}</div></div>
       <div class="metric"><span>Открытые заявки</span><strong>{dashboard.open_subscription_requests + dashboard.open_analysis_requests}</strong><div class="muted">подписки {dashboard.open_subscription_requests}, анализ {dashboard.open_analysis_requests}</div></div>
       <div class="metric"><span>Платные доступы</span><strong>{dashboard.access_paid_active}</strong><div class="muted">пробных {dashboard.access_trial_active}</div></div>
     </div>
+    <section><h2>Состояние системы</h2><div class="health-list">{_health_rows(summary.system_checks)}</div></section>
     <section><h2>Последняя загрузка</h2><p>{latest_import_html}</p></section>
     <section><h2>Последние ошибки доставки</h2><table><thead><tr><th>ID</th><th>Сигнал</th><th>ID Telegram</th><th>Матч</th><th>Время</th><th>Ошибка</th></tr></thead><tbody>{failed_rows}</tbody></table></section>
     <section><h2>Последние загрузки Excel</h2><table><thead><tr><th>ID</th><th>Файл</th><th>Статус</th><th>Разобрано / строк</th><th>Добавлено / обновлено / пропущено</th><th>Время</th><th>Ошибка</th></tr></thead><tbody>{import_rows}</tbody></table></section>

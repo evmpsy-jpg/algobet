@@ -15,6 +15,7 @@ from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
     MonitoringSummary,
+    SystemHealthItem,
     QualityStatsItem,
     QualitySummary,
     LatestImportSummary,
@@ -517,12 +518,23 @@ def test_render_monitoring_html_shows_operational_summary() -> None:
                 created_at=datetime(2026, 7, 24, 12, 0),
             )
         ],
+        system_checks=[
+            SystemHealthItem("problem", "Доставки", "Есть ошибки доставки: 1", "Откройте раздел Доставки"),
+            SystemHealthItem("warning", "Заявки", "Новых заявок: 3", "Подписки: 2, анализ: 1"),
+            SystemHealthItem("ok", "Backup", "Последний backup читается.", "algobet.db"),
+        ],
+        overdue_signals=2,
     )
 
     html = render_monitoring_html(summary)
 
     assert "Мониторинг" in html
     assert "Очередь сигналов" in html
+    assert "Состояние системы" in html
+    assert "Проблема" in html
+    assert "Внимание" in html
+    assert "Последний backup читается" in html
+    assert "просроченных 2" in html
     assert "Последние ошибки доставки" in html
     assert "telegram &lt;unavailable&gt;" in html
     assert "ЛЕТО.xlsx" in html

@@ -19,7 +19,7 @@ from app.database.models import (
     UserAccess,
     WebAdminActionLog,
 )
-from app.services.dashboard import collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_monitoring_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
+from app.services.dashboard import DashboardSummary, ImportListItem, build_system_health_checks, collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_monitoring_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
 
 
 @pytest.mark.asyncio
@@ -364,4 +364,49 @@ def test_collect_maintenance_summary_shows_storage_and_backup_settings(tmp_path)
     assert summary.sqlite_backup_enabled is True
     assert summary.latest_backup_path is None
     assert summary.backups == ()
+
+
+
+def test_build_system_health_checks_flags_operational_problems(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    dashboard = DashboardSummary(
+        deliveries_by_status={"failed": 2},
+        subscription_requests_by_status={"new": 1},
+        analysis_requests_by_status={"new": 1},
+    )
+    imports = [
+        ImportListItem(
+            id=1,
+            file_name="bad.xlsx",
+            status="failed",
+            total_rows=10,
+            parsed_matches=0,
+            inserted_matches=0,
+            updated_matches=0,
+            missing_matches=0,
+            error_text="Excel error",
+            created_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+    ]
+
+    checks = build_system_health_checks(
+        dashboard,
+        imports,
+        failed_delivery_count=2,
+        overdue_signals=3,
+        settings=SimpleNamespace(
+            data_dir=data_dir,
+            sqlite_backup_enabled=True,
+            sqlite_backup_interval_hours=24,
+        ),
+    )
+
+    by_title = {item.title: item for item in checks}
+    assert by_title["Доставки"].status == "problem"
+    assert by_title["Очередь сигналов"].status == "problem"
+    assert by_title["Импорт"].status == "problem"
+    assert by_title["Заявки"].status == "warning"
+    assert by_title["Backup"].status == "warning"
 
