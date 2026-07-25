@@ -47,6 +47,7 @@ from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
     MonitoringSummary,
+    ImportDetail,
     SystemHealthItem,
     QualityStatsItem,
     QualitySummary,
@@ -58,6 +59,7 @@ from app.services.dashboard import (
     UserListItem,
     collect_dashboard_summary,
     collect_delivery_list,
+    collect_import_detail,
     collect_maintenance_summary,
     collect_monitoring_summary,
     collect_quality_summary,
@@ -1266,6 +1268,52 @@ def _health_rows(items: list[SystemHealthItem]) -> str:
     ) or '<p class="muted">Проверок пока нет.</p>'
 
 
+def _decision_reason_rows(reasons) -> str:
+    return "".join(
+        f"""
+        <tr>
+          <td>{escape(item.reason)}</td>
+          <td>{item.count}</td>
+        </tr>
+        """
+        for item in reasons
+    ) or '<tr><td colspan="2" class="muted">Причин отклонения нет.</td></tr>'
+
+
+def render_import_detail_html(detail: ImportDetail, *, token: str = "") -> str:
+    batch = detail.batch
+    signal_counts: dict[str, int] = {}
+    group_counts: dict[str, int] = {}
+    for signal in detail.signals:
+        signal_counts[signal.status] = signal_counts.get(signal.status, 0) + 1
+        group_counts[signal.signal_group] = group_counts.get(signal.signal_group, 0) + 1
+    warning_rows = _signal_rows(detail.schedule_warnings, token=token)
+    body = f"""
+    <section><h2>Импорт #{batch.id}</h2>
+      <dl class="details">
+        <dt>Файл</dt><dd>{escape(batch.file_name)}</dd>
+        <dt>Статус</dt><dd>{escape(_label(batch.status))}</dd>
+        <dt>Строк / матчей</dt><dd>{batch.total_rows} / {batch.parsed_matches}</dd>
+        <dt>Новых / обновлено / отсутствуют</dt><dd>{batch.inserted_matches} / {batch.updated_matches} / {batch.missing_matches}</dd>
+        <dt>Создано</dt><dd>{_fmt_dt(batch.created_at)}</dd>
+        <dt>Завершено</dt><dd>{_fmt_dt(batch.finished_at)}</dd>
+        <dt>Ошибка</dt><dd>{escape(batch.error_text or '-')}</dd>
+      </dl>
+      <div class="pills">
+        <span class="pill"><b>Сигналов</b> {len(detail.signals)}</span>
+        <span class="pill"><b>Проблем расписания</b> {len(detail.schedule_warnings)}</span>
+        <span class="pill"><b>Принято правилом</b> {detail.decision_counts.get('accepted', 0)}</span>
+        <span class="pill"><b>Отклонено правилом</b> {detail.decision_counts.get('rejected', 0)}</span>
+      </div>
+    </section>
+    <section><h2>Статусы сигналов</h2><div class="pills">{_fmt_counts(signal_counts)}{_fmt_counts(group_counts)}</div></section>
+    <section><h2>Проблемы расписания</h2><table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{warning_rows}</tbody></table></section>
+    <section><h2>Сигналы загрузки</h2><table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{_signal_rows(detail.signals, token=token)}</tbody></table></section>
+    <section><h2>Причины отклонения</h2><table><thead><tr><th>Причина</th><th>Количество</th></tr></thead><tbody>{_decision_reason_rows(detail.rejection_reasons)}</tbody></table></section>
+    """
+    return _base_html(f"Импорт #{batch.id}", body, token=token)
+
+
 def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> str:
     dashboard = summary.dashboard
     latest = dashboard.latest_import
@@ -1291,7 +1339,7 @@ def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> st
         f"""
         <tr>
           <td>#{item.id}</td>
-          <td>{escape(item.file_name)}</td>
+          <td><a href="{_token_href(f'/imports/{item.id}', token)}">{escape(item.file_name)}</a></td>
           <td>{escape(_label(item.status))}</td>
           <td>{item.parsed_matches} / {item.total_rows}</td>
           <td>{item.inserted_matches} / {item.updated_matches} / {item.missing_matches}</td>
@@ -2051,6 +2099,15 @@ async def signals_export(_: Annotated[None, Depends(require_web_admin)], request
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=algobet-signals.csv"},
     )
+
+
+@app.get("/imports/{import_id}", response_class=HTMLResponse)
+async def import_detail(_: Annotated[None, Depends(require_web_admin)], request: Request, import_id: int) -> HTMLResponse:
+    async with SessionFactory() as session:
+        detail = await collect_import_detail(session, import_id)
+    if detail is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
+    return HTMLResponse(render_import_detail_html(detail, token=""))
 
 
 @app.get("/deliveries", response_class=HTMLResponse)

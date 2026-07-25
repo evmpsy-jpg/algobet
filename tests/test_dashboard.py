@@ -13,13 +13,14 @@ from app.database.models import (
     MatchAnalysisRequest,
     ScheduledSignal,
     SignalDelivery,
+    SignalDecisionLog,
     SignalResult,
     SubscriptionRequest,
     User,
     UserAccess,
     WebAdminActionLog,
 )
-from app.services.dashboard import DashboardSummary, ImportListItem, build_system_health_checks, collect_dashboard_summary, collect_delivery_list, collect_import_signal_schedule_warnings, collect_maintenance_summary, collect_monitoring_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
+from app.services.dashboard import DashboardSummary, ImportListItem, build_system_health_checks, collect_dashboard_summary, collect_delivery_list, collect_import_detail, collect_import_signal_schedule_warnings, collect_maintenance_summary, collect_monitoring_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
 
 
 @pytest.mark.asyncio
@@ -294,12 +295,35 @@ async def test_schedule_problem_filter_and_import_warnings() -> None:
                 signal_payload={"signal_group": "all"},
                 source_import_id=batch.id,
             ),
+            SignalDecisionLog(
+                match_id=ok_match.id,
+                import_batch_id=batch.id,
+                algorithm_version="v1",
+                source="import",
+                suitable=True,
+                side=1,
+                selected_player="OK Player",
+                probability=99,
+                level="TOP",
+                signal_type="SET_VIP_TOP",
+                decision_payload={"signal_group": "vip"},
+            ),
+            SignalDecisionLog(
+                match_id=bad_match.id,
+                import_batch_id=batch.id,
+                algorithm_version="v1",
+                source="import",
+                suitable=False,
+                reason="Недостаточно игр",
+                decision_payload={},
+            ),
         ])
         await session.commit()
 
         all_signals = await collect_signal_list(session)
         problem_signals = await collect_signal_list(session, schedule_filter="problem")
         import_warnings = await collect_import_signal_schedule_warnings(session, batch.id)
+        import_detail = await collect_import_detail(session, batch.id)
 
     await engine.dispose()
 
@@ -307,6 +331,12 @@ async def test_schedule_problem_filter_and_import_warnings() -> None:
     assert [item.player_1 for item in problem_signals] == ["Bad Player"]
     assert problem_signals[0].schedule_warning == "ожидалось 20 мин"
     assert [item.player_1 for item in import_warnings] == ["Bad Player"]
+    assert import_detail is not None
+    assert import_detail.batch.file_name == "schedule.xlsx"
+    assert len(import_detail.signals) == 2
+    assert [item.player_1 for item in import_detail.schedule_warnings] == ["Bad Player"]
+    assert import_detail.decision_counts == {"accepted": 1, "rejected": 1}
+    assert [(item.reason, item.count) for item in import_detail.rejection_reasons] == [("Недостаточно игр", 1)]
 
 
 @pytest.mark.asyncio

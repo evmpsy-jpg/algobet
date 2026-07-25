@@ -22,6 +22,8 @@ from app.services.dashboard import (
     RecentSignalSummary,
     DeliveryListItem,
     ImportListItem,
+    ImportDecisionReason,
+    ImportDetail,
     RequestDetail,
     RequestListItem,
     SignalDetail,
@@ -47,6 +49,7 @@ from app.web_admin import (
     render_admin_guide_html,
     render_markdown_document,
     render_dashboard_html,
+    render_import_detail_html,
     render_deliveries_csv,
     render_deliveries_html,
     render_maintenance_html,
@@ -518,6 +521,53 @@ def test_render_request_detail_html_shows_payment_and_contact() -> None:
     assert "Выполнена" in html
 
 
+def test_render_import_detail_html_shows_signals_and_rejections() -> None:
+    signal = make_signal()
+    problem = SignalListItem(
+        id=12,
+        status="scheduled",
+        send_at=datetime(2026, 7, 24, 12, 0),
+        signal_group="all",
+        level="STANDARD",
+        side=2,
+        player_1="Problem Player",
+        player_2="Opponent",
+        result_status=None,
+        match_start_at=datetime(2026, 7, 24, 13, 0),
+        lead_minutes=60,
+        schedule_warning="ожидалось 20 мин",
+    )
+    detail = ImportDetail(
+        batch=ImportListItem(
+            id=2,
+            file_name="ЛЕТО.xlsx",
+            status="completed",
+            total_rows=10,
+            parsed_matches=8,
+            inserted_matches=7,
+            updated_matches=1,
+            missing_matches=2,
+            error_text=None,
+            created_at=datetime(2026, 7, 24, 10, 0),
+            finished_at=datetime(2026, 7, 24, 10, 1),
+        ),
+        signals=[signal, problem],
+        schedule_warnings=[problem],
+        decision_counts={"accepted": 2, "rejected": 3},
+        rejection_reasons=[ImportDecisionReason("Недостаточно игр", 3)],
+    )
+
+    html = render_import_detail_html(detail, token="secret")
+
+    assert "Импорт #2" in html
+    assert "ЛЕТО.xlsx" in html
+    assert "Проблем расписания" in html
+    assert "Problem Player" in html
+    assert "ожидалось 20 мин" in html
+    assert "Недостаточно игр" in html
+    assert "/signals/12" in html
+
+
 def test_render_monitoring_html_shows_operational_summary() -> None:
     dashboard = make_summary()
     summary = MonitoringSummary(
@@ -582,6 +632,7 @@ def test_render_monitoring_html_shows_operational_summary() -> None:
     assert "telegram &lt;unavailable&gt;" in html
     assert "ЛЕТО.xlsx" in html
     assert "Excel error" in html
+    assert "/imports/2" in html
     assert "Изменение настроек" in html
     assert "/monitoring" in html
 

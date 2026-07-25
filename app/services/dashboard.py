@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -228,6 +229,21 @@ class ImportListItem:
 
 
 @dataclass(frozen=True)
+class ImportDecisionReason:
+    reason: str
+    count: int
+
+
+@dataclass(frozen=True)
+class ImportDetail:
+    batch: ImportListItem
+    signals: list[SignalListItem] = field(default_factory=list)
+    schedule_warnings: list[SignalListItem] = field(default_factory=list)
+    decision_counts: dict[str, int] = field(default_factory=dict)
+    rejection_reasons: list[ImportDecisionReason] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class SystemHealthItem:
     status: str
     title: str
@@ -319,6 +335,22 @@ async def _delivery_counts_by_user(session: AsyncSession, user_ids: list[int]) -
     for user_id, status, value in rows:
         counts.setdefault(int(user_id), {})[str(status or "unknown")] = int(value or 0)
     return counts
+
+
+def import_list_item_from_batch(batch: ImportBatch) -> ImportListItem:
+    return ImportListItem(
+        id=batch.id,
+        file_name=batch.file_name,
+        status=batch.status,
+        total_rows=batch.total_rows,
+        parsed_matches=batch.parsed_matches,
+        inserted_matches=batch.inserted_matches,
+        updated_matches=batch.updated_matches,
+        missing_matches=batch.missing_matches,
+        error_text=batch.error_text,
+        created_at=batch.created_at,
+        finished_at=batch.finished_at,
+    )
 
 
 def expected_signal_lead_minutes(settings: Any | None = None) -> int:
@@ -643,22 +675,7 @@ async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10, 
     import_rows = (
         await session.scalars(select(ImportBatch).order_by(desc(ImportBatch.id)).limit(limit))
     ).all()
-    recent_imports = [
-        ImportListItem(
-            id=item.id,
-            file_name=item.file_name,
-            status=item.status,
-            total_rows=item.total_rows,
-            parsed_matches=item.parsed_matches,
-            inserted_matches=item.inserted_matches,
-            updated_matches=item.updated_matches,
-            missing_matches=item.missing_matches,
-            error_text=item.error_text,
-            created_at=item.created_at,
-            finished_at=item.finished_at,
-        )
-        for item in import_rows
-    ]
+    recent_imports = [import_list_item_from_batch(item) for item in import_rows]
     recent_admin_actions = list(
         (
             await session.scalars(
@@ -794,6 +811,67 @@ async def collect_upcoming_signal_list(
         )
         for signal, match, result in rows
     ]
+
+
+async def collect_import_detail(session: AsyncSession, import_batch_id: int) -> ImportDetail | None:
+    batch = await session.get(ImportBatch, import_batch_id)
+    if batch is None:
+        return None
+
+    rows = (
+        await session.execute(
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.source_import_id == import_batch_id)
+            .order_by(ScheduledSignal.send_at.asc())
+        )
+    ).all()
+    signal_ids = [signal.id for signal, _, _ in rows]
+    delivery_counts = await _delivery_counts_by_signal(session, signal_ids)
+    expected_lead = expected_signal_lead_minutes()
+    now = datetime.utcnow()
+    signals = [
+        build_signal_list_item(
+            signal,
+            match,
+            result,
+            delivery_counts=delivery_counts,
+            expected_lead_minutes=expected_lead,
+            now=now,
+        )
+        for signal, match, result in rows
+    ]
+
+    decision_rows = (
+        await session.execute(
+            select(SignalDecisionLog.suitable, SignalDecisionLog.reason, func.count(SignalDecisionLog.id))
+            .where(SignalDecisionLog.import_batch_id == import_batch_id)
+            .group_by(SignalDecisionLog.suitable, SignalDecisionLog.reason)
+        )
+    ).all()
+    decision_counts: Counter[str] = Counter()
+    rejection_counter: Counter[str] = Counter()
+    for suitable, reason, count in decision_rows:
+        value = int(count or 0)
+        if suitable:
+            decision_counts["accepted"] += value
+        else:
+            decision_counts["rejected"] += value
+            rejection_counter[str(reason or "Без причины")] += value
+
+    rejection_reasons = [
+        ImportDecisionReason(reason=reason, count=count)
+        for reason, count in sorted(rejection_counter.items(), key=lambda item: (-item[1], item[0]))[:10]
+    ]
+
+    return ImportDetail(
+        batch=import_list_item_from_batch(batch),
+        signals=signals,
+        schedule_warnings=[item for item in signals if item.schedule_warning],
+        decision_counts=dict(decision_counts),
+        rejection_reasons=rejection_reasons,
+    )
 
 
 async def collect_user_list(
