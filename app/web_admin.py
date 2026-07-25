@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import hmac
+import re
 from urllib.parse import parse_qs
 from io import StringIO
 from contextlib import asynccontextmanager
 from datetime import datetime
 from html import escape
+from pathlib import Path
 from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -66,6 +68,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Algobet Admin", docs_url=None, redoc_url=None, lifespan=lifespan)
 security = HTTPBasic(auto_error=False)
+ADMIN_GUIDE_PATH = Path(__file__).resolve().parents[1] / "docs" / "admin-guide.md"
 
 
 def _auth_error() -> HTTPException:
@@ -443,6 +446,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Настройки", "/settings"),
             ("Журнал", "/audit"),
             ("Обслуживание", "/maintenance"),
+            ("Инструкция", "/docs"),
         ]
     )
     refresh_href = _token_href("/", token)
@@ -488,6 +492,15 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .settings-form {{ display:grid; gap:8px; max-width:760px; }}
     .settings-form label {{ color:var(--muted); font-weight:700; font-size:13px; }}
     .settings-form textarea, .settings-form input {{ width:100%; border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; color:var(--text); background:#fff; }}
+    .doc-page {{ display:block; max-width:920px; }}
+    .doc-page h1 {{ margin:0 0 16px; font-size:26px; }}
+    .doc-page h2 {{ margin:28px 0 12px; padding-top:16px; border-top:1px solid var(--line); font-size:18px; }}
+    .doc-page h3 {{ margin:20px 0 10px; font-size:15px; }}
+    .doc-page p {{ margin:0 0 12px; line-height:1.55; }}
+    .doc-page ul, .doc-page ol {{ margin:0 0 14px 22px; padding:0; line-height:1.55; }}
+    .doc-page li {{ margin:5px 0; }}
+    .doc-page code {{ padding:2px 5px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:4px; }}
+    .doc-page a {{ color:var(--accent); font-weight:700; }}
     @media (max-width:900px) {{ .grid,.sections {{ grid-template-columns:1fr 1fr; }} }}
     @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections {{ grid-template-columns:1fr; }} table {{ font-size:13px; }} th.optional,td.optional {{ display:none; }} }}
   </style>
@@ -1204,6 +1217,78 @@ def render_maintenance_html(summary: MaintenanceSummary, *, token: str = "") -> 
     return _base_html("Обслуживание", body, token=token)
 
 
+def _render_inline_markdown(text: str) -> str:
+    rendered = escape(text)
+    rendered = re.sub(r"`([^`]+)`", r"<code>\1</code>", rendered)
+    rendered = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', rendered)
+    return rendered
+
+
+def render_markdown_document(markdown_text: str) -> str:
+    html: list[str] = []
+    list_type: str | None = None
+
+    def close_list() -> None:
+        nonlocal list_type
+        if list_type is not None:
+            html.append(f"</{list_type}>")
+            list_type = None
+
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            close_list()
+            continue
+
+        if line.startswith("### "):
+            close_list()
+            html.append(f"<h3>{_render_inline_markdown(line[4:])}</h3>")
+            continue
+        if line.startswith("## "):
+            close_list()
+            html.append(f"<h2>{_render_inline_markdown(line[3:])}</h2>")
+            continue
+        if line.startswith("# "):
+            close_list()
+            html.append(f"<h1>{_render_inline_markdown(line[2:])}</h1>")
+            continue
+
+        ordered_match = re.match(r"^\d+\.\s+(.+)$", line)
+        if ordered_match:
+            if list_type != "ol":
+                close_list()
+                html.append("<ol>")
+                list_type = "ol"
+            html.append(f"<li>{_render_inline_markdown(ordered_match.group(1))}</li>")
+            continue
+
+        if line.startswith("- "):
+            if list_type != "ul":
+                close_list()
+                html.append("<ul>")
+                list_type = "ul"
+            html.append(f"<li>{_render_inline_markdown(line[2:])}</li>")
+            continue
+
+        close_list()
+        html.append(f"<p>{_render_inline_markdown(line)}</p>")
+
+    close_list()
+    return "\n".join(html)
+
+
+def read_admin_guide(path: Path = ADMIN_GUIDE_PATH) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "# Инструкция недоступна\n\nФайл `docs/admin-guide.md` не найден на сервере."
+
+
+def render_admin_guide_html(markdown_text: str, *, token: str = "") -> str:
+    body = f'<section class="doc-page">{render_markdown_document(markdown_text)}</section>'
+    return _base_html("Инструкция", body, token=token)
+
+
 @app.get("/monitoring", response_class=HTMLResponse)
 async def monitoring(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
     async with SessionFactory() as session:
@@ -1466,6 +1551,11 @@ async def requests_export(_: Annotated[None, Depends(require_web_admin)], reques
 async def maintenance(_: Annotated[None, Depends(require_web_admin)]) -> HTMLResponse:
     summary = collect_maintenance_summary(get_settings())
     return HTMLResponse(render_maintenance_html(summary))
+
+
+@app.get("/docs", response_class=HTMLResponse)
+async def admin_docs(_: Annotated[None, Depends(require_web_admin)]) -> HTMLResponse:
+    return HTMLResponse(render_admin_guide_html(read_admin_guide()))
 
 
 @app.post("/signals/{signal_id}/result/{result_status}")

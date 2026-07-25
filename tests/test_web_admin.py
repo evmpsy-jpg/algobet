@@ -33,6 +33,8 @@ from app.web_admin import (
     log_web_admin_action,
     render_audit_csv,
     render_audit_html,
+    render_admin_guide_html,
+    render_markdown_document,
     render_dashboard_html,
     render_deliveries_csv,
     render_deliveries_html,
@@ -637,6 +639,27 @@ async def test_update_web_payment_settings_saves_analysis_values() -> None:
 
     assert config.payment_details == "Карта анализа"
     assert config.specialist_contact == "@spec"
+
+
+def test_render_admin_guide_html_converts_markdown_and_shows_navigation() -> None:
+    html = render_admin_guide_html("# Инструкция\n\n## Сигналы\n\n1. Откройте `Мониторинг`.\n- Проверьте [README](README.md).")
+
+    assert "Инструкция" in html
+    assert "<h1>Инструкция</h1>" in html
+    assert "<h2>Сигналы</h2>" in html
+    assert "<ol>" in html
+    assert "<ul>" in html
+    assert "<code>Мониторинг</code>" in html
+    assert '<a href="README.md">README</a>' in html
+    assert "/docs" in html
+
+
+def test_render_markdown_document_escapes_html() -> None:
+    html = render_markdown_document("# <script>bad</script>\n\n- `safe <code>`")
+
+    assert "&lt;script&gt;bad&lt;/script&gt;" in html
+    assert "safe &lt;code&gt;" in html
+    assert "<script>" not in html
 
 
 def test_render_maintenance_html_shows_storage_and_backup_settings() -> None:
