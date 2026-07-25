@@ -7,7 +7,7 @@ import hmac
 import secrets
 from dataclasses import dataclass
 import re
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 from io import StringIO
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -328,6 +328,26 @@ def _signals_path(
     if schedule_filter:
         params.append(f"schedule={schedule_filter}")
     return base + ("?" + "&".join(params) if params else "")
+
+
+def _deliveries_path(
+    status_filter: str | None = None,
+    search: str | None = None,
+    signal_id: int | None = None,
+    user_id: int | None = None,
+    *,
+    base: str = "/deliveries",
+) -> str:
+    params = []
+    if status_filter:
+        params.append(("status", status_filter))
+    if search:
+        params.append(("q", str(search)))
+    if signal_id is not None:
+        params.append(("signal_id", str(signal_id)))
+    if user_id is not None:
+        params.append(("user_id", str(user_id)))
+    return base + ("?" + urlencode(params) if params else "")
 
 
 def _import_path(
@@ -895,57 +915,95 @@ def _delivery_retry_action(delivery_id: int, delivery_status: str, status_filter
     )
 
 
+def _delivery_user_label(delivery: DeliveryListItem) -> str:
+    username = f"@{delivery.username}" if delivery.username else ""
+    full_name = " ".join(part for part in [delivery.first_name, delivery.last_name] if part)
+    return username or full_name or str(delivery.telegram_id)
+
+
+def _delivery_user_link(delivery: DeliveryListItem, token: str) -> str:
+    label = escape(_delivery_user_label(delivery))
+    details = f'<div class="muted">{delivery.telegram_id}</div>'
+    if delivery.user_id is None:
+        return label + details
+    href = _token_href(f"/users/{delivery.user_id}", token)
+    return f'<a href="{href}">{label}</a>{details}'
+
+
 def render_deliveries_csv(deliveries) -> str:
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(["id", "signal_id", "status", "telegram_id", "username", "signal_group", "match", "time", "error"])
+    writer.writerow(["id", "signal_id", "signal_status", "status", "telegram_id", "username", "name", "signal_group", "match", "created_at", "sent_at", "error"])
     for delivery in deliveries:
+        full_name = " ".join(part for part in [delivery.first_name, delivery.last_name] if part)
         writer.writerow([
             delivery.id,
             delivery.signal_id,
+            delivery.signal_status or "",
             delivery.status,
             delivery.telegram_id,
             delivery.username or "",
+            full_name,
             delivery.signal_group,
             delivery.match_title,
-            _fmt_dt(delivery.sent_at or delivery.created_at),
+            _fmt_dt(delivery.created_at),
+            _fmt_dt(delivery.sent_at),
             delivery.error_text or "",
         ])
     return output.getvalue()
 
 
-def render_deliveries_html(deliveries, *, token: str = "", status_filter: str | None = None) -> str:
+def render_deliveries_html(
+    deliveries,
+    *,
+    token: str = "",
+    status_filter: str | None = None,
+    search: str | None = None,
+    signal_id: int | None = None,
+    user_id: int | None = None,
+) -> str:
     filters = "".join(
-        f'<a class="button" href="{_token_href(path, token)}">{label}</a>'
-        for label, path in [
-            ("Все", "/deliveries"),
-            ("Отправлено", "/deliveries?status=sent"),
-            ("Ошибка", "/deliveries?status=failed"),
-            ("Ожидает", "/deliveries?status=pending"),
+        f'<a class="button" href="{_token_href(_deliveries_path(status, search, signal_id, user_id), token)}">{label}</a>'
+        for label, status in [
+            ("Все", None),
+            ("Отправлено", "sent"),
+            ("Ошибка", "failed"),
+            ("Ожидает", "pending"),
         ]
     )
     rows = "".join(
         f"""
         <tr>
           <td>#{delivery.id}</td>
-          <td><a href="{_token_href(f'/signals/{delivery.signal_id}', token)}">#{delivery.signal_id}</a></td>
+          <td><a href="{_token_href(f'/signals/{delivery.signal_id}', token)}">#{delivery.signal_id}</a><div class="muted">{escape(_label(delivery.signal_status))}</div></td>
           <td>{escape(_label(delivery.status))}</td>
-          <td>{delivery.telegram_id}</td>
-          <td>{escape('@' + delivery.username if delivery.username else '-')}</td>
+          <td>{_delivery_user_link(delivery, token)}</td>
           <td>{escape(delivery.signal_group.upper())}</td>
           <td>{escape(delivery.match_title)}</td>
-          <td>{_fmt_dt(delivery.sent_at or delivery.created_at)}</td>
-          <td class="optional">{escape((delivery.error_text or '-')[:180])}</td>
+          <td>{_fmt_dt(delivery.created_at)}</td>
+          <td>{_fmt_dt(delivery.sent_at)}</td>
+          <td>{escape((delivery.error_text or '-')[:180])}</td>
           <td>{_delivery_retry_action(delivery.id, delivery.status, status_filter)}</td>
         </tr>
         """
         for delivery in deliveries
     ) or '<tr><td colspan="10" class="muted">Доставок пока нет.</td></tr>'
+    csv_href = _token_href(_deliveries_path(status_filter, search, signal_id, user_id, base="/deliveries/export.csv"), token)
+    search_value = escape(search or "", quote=True)
+    signal_value = "" if signal_id is None else str(signal_id)
+    user_value = "" if user_id is None else str(user_id)
     body = f"""
-    <section>
-      <h2>Доставки: {escape(_label(status_filter or 'all'))}</h2>
-      <div class="filters">{filters}<a class="button" href="{_token_href('/deliveries/export.csv' + ('?status=' + status_filter if status_filter else ''), token)}">CSV</a></div>
-      <table><thead><tr><th>ID</th><th>Сигнал</th><th>Статус</th><th>Telegram</th><th>Пользователь</th><th>Группа</th><th>Матч</th><th>Время</th><th class="optional">Ошибка</th></tr></thead><tbody>{rows}</tbody></table>
+    <section><h2>Доставки: {escape(_label(status_filter or 'all'))}</h2>
+      <form method="get" action="/deliveries" class="inline-form">
+        <input name="q" value="{search_value}" placeholder="Поиск: пользователь, Telegram ID, матч, сигнал">
+        <input name="signal_id" value="{signal_value}" inputmode="numeric" placeholder="ID сигнала">
+        <input name="user_id" value="{user_value}" inputmode="numeric" placeholder="ID пользователя">
+        {f'<input type="hidden" name="status" value="{escape(status_filter, quote=True)}">' if status_filter else ''}
+        <button class="action-button" type="submit">Найти</button>
+        <a class="button" href="{_token_href('/deliveries', token)}">Сбросить</a>
+      </form>
+      <div class="filters">{filters}<a class="button" href="{csv_href}">CSV</a></div>
+      <table><thead><tr><th>ID</th><th>Сигнал</th><th>Статус</th><th>Пользователь</th><th>Группа</th><th>Матч</th><th>Создано</th><th>Отправлено</th><th>Ошибка</th><th>Действие</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     """
     return _base_html("Доставки", body, token=token)
@@ -2199,19 +2257,38 @@ async def import_signals_export(_: Annotated[None, Depends(require_web_admin)], 
     )
 
 
+def _delivery_query_filters(request: Request) -> tuple[str | None, str | None, int | None, int | None]:
+    status_filter = request.query_params.get("status") or None
+    if status_filter not in {"sent", "failed", "pending"}:
+        status_filter = None
+    search = request.query_params.get("q") or None
+    signal_id = _optional_int(request.query_params.get("signal_id"))
+    user_id = _optional_int(request.query_params.get("user_id"))
+    return status_filter, search, signal_id, user_id
+
+
+def _optional_int(value: str | None) -> int | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
 @app.get("/deliveries", response_class=HTMLResponse)
 async def deliveries(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
-    status_filter = request.query_params.get("status") or None
+    status_filter, search, signal_id, user_id = _delivery_query_filters(request)
     async with SessionFactory() as session:
-        rows = await collect_delivery_list(session, status_filter=status_filter)
-    return HTMLResponse(render_deliveries_html(rows, token="", status_filter=status_filter))
+        rows = await collect_delivery_list(session, status_filter=status_filter, search=search, signal_id=signal_id, user_id=user_id)
+    return HTMLResponse(render_deliveries_html(rows, token="", status_filter=status_filter, search=search, signal_id=signal_id, user_id=user_id))
 
 
 @app.get("/deliveries/export.csv")
 async def deliveries_export(_: Annotated[None, Depends(require_web_admin)], request: Request) -> Response:
-    status_filter = request.query_params.get("status") or None
+    status_filter, search, signal_id, user_id = _delivery_query_filters(request)
     async with SessionFactory() as session:
-        rows = await collect_delivery_list(session, status_filter=status_filter, limit=10000)
+        rows = await collect_delivery_list(session, status_filter=status_filter, search=search, signal_id=signal_id, user_id=user_id, limit=10000)
     content = render_deliveries_csv(rows)
     return Response(
         content=content,

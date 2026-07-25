@@ -215,16 +215,24 @@ def test_render_deliveries_html_shows_filters_and_errors() -> None:
                 sent_at=None,
                 created_at=datetime(2026, 7, 24, 11, 45),
                 error_text="telegram <unavailable>",
+                user_id=1,
+                first_name="Admin",
+                last_name="User",
+                signal_status="sent",
             )
         ],
         token="secret",
         status_filter="failed",
+        search="admin",
+        signal_id=11,
+        user_id=1,
     )
 
     assert "Доставки: Ошибка" in html
-    assert "/deliveries?status=sent" in html
-    assert "/deliveries/export.csv?status=failed" in html
+    assert "/deliveries?status=sent&q=admin&signal_id=11&user_id=1" in html
+    assert "/deliveries/export.csv?status=failed&q=admin&signal_id=11&user_id=1" in html
     assert "/signals/11" in html
+    assert "/users/1" in html
     assert "Player &lt;One&gt; - Player Two" in html
     assert "telegram &lt;unavailable&gt;" in html
     assert 'action="/deliveries/5/retry?status=failed"' in html
@@ -244,11 +252,15 @@ def test_render_deliveries_csv_exports_rows() -> None:
             sent_at=None,
             created_at=datetime(2026, 7, 24, 11, 45),
             error_text="telegram unavailable",
+            user_id=1,
+            first_name="Admin",
+            last_name="User",
+            signal_status="sent",
         )
     ])
 
-    assert csv_text.splitlines()[0] == "id,signal_id,status,telegram_id,username,signal_group,match,time,error"
-    assert "5,11,failed,315715137,admin,vip,Player One - Player Two,24.07.2026 14:45,telegram unavailable" in csv_text
+    assert csv_text.splitlines()[0] == "id,signal_id,signal_status,status,telegram_id,username,name,signal_group,match,created_at,sent_at,error"
+    assert "5,11,sent,failed,315715137,admin,Admin User,vip,Player One - Player Two,24.07.2026 14:45,-,telegram unavailable" in csv_text
 
 
 def test_render_quality_html_shows_signal_result_statistics() -> None:

@@ -135,6 +135,10 @@ class DeliveryListItem:
     sent_at: datetime | None
     created_at: datetime
     error_text: str | None
+    user_id: int | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    signal_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -959,6 +963,9 @@ async def collect_delivery_list(
     session: AsyncSession,
     *,
     status_filter: str | None = None,
+    search: str | None = None,
+    signal_id: int | None = None,
+    user_id: int | None = None,
     limit: int = 100,
 ) -> list[DeliveryListItem]:
     query = (
@@ -971,6 +978,28 @@ async def collect_delivery_list(
     )
     if status_filter:
         query = query.where(SignalDelivery.status == status_filter)
+    if signal_id is not None:
+        query = query.where(SignalDelivery.signal_id == signal_id)
+    if user_id is not None:
+        query = query.where(SignalDelivery.user_id == user_id)
+    search_text = (search or "").strip()
+    if search_text:
+        like = f"%{search_text.lower()}%"
+        conditions = [
+            func.lower(User.username).like(like),
+            func.lower(User.first_name).like(like),
+            func.lower(User.last_name).like(like),
+            func.lower(Match.player_1).like(like),
+            func.lower(Match.player_2).like(like),
+        ]
+        if search_text.isdigit():
+            value = int(search_text)
+            conditions.extend([
+                SignalDelivery.telegram_id == value,
+                SignalDelivery.signal_id == value,
+                SignalDelivery.id == value,
+            ])
+        query = query.where(or_(*conditions))
     rows = (await session.execute(query)).all()
     return [
         DeliveryListItem(
@@ -984,6 +1013,10 @@ async def collect_delivery_list(
             sent_at=delivery.sent_at,
             created_at=delivery.created_at,
             error_text=delivery.error_text,
+            user_id=user.id if user is not None else None,
+            first_name=user.first_name if user is not None else None,
+            last_name=user.last_name if user is not None else None,
+            signal_status=signal.status,
         )
         for delivery, signal, match, user in rows
     ]

@@ -160,6 +160,9 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
         done_requests = await collect_request_list(session, status_filter="done")
         deliveries = await collect_delivery_list(session)
         failed_deliveries = await collect_delivery_list(session, status_filter="failed")
+        searched_deliveries = await collect_delivery_list(session, search="paid_user")
+        signal_deliveries = await collect_delivery_list(session, signal_id=signal.id)
+        user_deliveries = await collect_delivery_list(session, user_id=user.id)
         signal_detail = await collect_signal_detail(session, signal.id)
         user_detail = await collect_user_detail(session, user.id)
         subscription_detail = await collect_request_detail(session, "subscription", 1)
@@ -200,6 +203,9 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert deliveries[0].error_text == "telegram unavailable"
     assert deliveries[0].match_title == "Player 1 - Player 2"
     assert len(failed_deliveries) == 1
+    assert len(searched_deliveries) == 1
+    assert len(signal_deliveries) == 2
+    assert len(user_deliveries) == 1
     assert failed_deliveries[0].telegram_id == inactive_user.telegram_id
 
     assert len(users) == 2
