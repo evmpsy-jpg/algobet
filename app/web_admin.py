@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import csv
 import hmac
+from dataclasses import dataclass
 import re
 from urllib.parse import parse_qs
 from io import StringIO
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 from typing import Annotated, AsyncIterator
@@ -435,6 +436,43 @@ def _user_name(user: UserListItem | RequestListItem) -> str:
     return escape(username or str(user.telegram_id))
 
 
+@dataclass(frozen=True)
+class WebAdminActivityItem:
+    username: str
+    configured: bool
+    last_action: str | None = None
+    last_action_at: datetime | None = None
+    actions_7d: int = 0
+
+
+async def collect_web_admin_activity(session, configured_usernames: list[str]) -> list[WebAdminActivityItem]:
+    since = datetime.utcnow() - timedelta(days=7)
+    logs = list(
+        (
+            await session.scalars(
+                select(WebAdminActionLog).order_by(desc(WebAdminActionLog.created_at), desc(WebAdminActionLog.id)).limit(10000)
+            )
+        ).all()
+    )
+    usernames = list(dict.fromkeys([*configured_usernames, *(log.actor_username for log in logs if log.actor_username)]))
+    items: list[WebAdminActivityItem] = []
+    configured = set(configured_usernames)
+    for username in usernames:
+        user_logs = [log for log in logs if log.actor_username == username]
+        latest = user_logs[0] if user_logs else None
+        actions_7d = sum(1 for log in user_logs if log.created_at and log.created_at >= since)
+        items.append(
+            WebAdminActivityItem(
+                username=username,
+                configured=username in configured,
+                last_action=latest.action if latest is not None else None,
+                last_action_at=latest.created_at if latest is not None else None,
+                actions_7d=actions_7d,
+            )
+        )
+    return items
+
+
 def _base_html(title: str, body: str, *, token: str = "") -> str:
     nav = "".join(
         f'<a href="{_token_href(path, token)}">{label}</a>'
@@ -449,6 +487,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Заявки", "/requests"),
             ("Настройки", "/settings"),
             ("Журнал", "/audit"),
+            ("Админы", "/admins"),
             ("Обслуживание", "/maintenance"),
             ("Инструкция", "/docs"),
         ]
@@ -1129,6 +1168,33 @@ def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> st
     return _base_html("Мониторинг", body, token=token)
 
 
+def render_web_admins_html(items: list[WebAdminActivityItem], *, token: str = "") -> str:
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(item.username)}</td>
+          <td>{'Да' if item.configured else 'Нет, только в журнале'}</td>
+          <td>{escape(_label(item.last_action))}</td>
+          <td>{_fmt_dt(item.last_action_at)}</td>
+          <td>{item.actions_7d}</td>
+        </tr>
+        """
+        for item in items
+    ) or '<tr><td colspan="5" class="muted">Web-админы не настроены.</td></tr>'
+    body = f"""
+    <section><h2>Админы</h2>
+      <p class="muted">Пароли здесь не показываются. Страница отображает логины из WEB_ADMIN_USERS и активность из журнала действий.</p>
+      <table><thead><tr><th>Логин</th><th>Настроен сейчас</th><th>Последнее действие</th><th>Когда</th><th>Действий за 7 дней</th></tr></thead><tbody>{rows}</tbody></table>
+    </section>
+    <section><h2>Как менять доступ</h2>
+      <p>Добавление, удаление и смена пароля web-админа выполняются на VPS в файле <code>/opt/algobet/.env</code>.</p>
+      <p>Используйте переменную <code>WEB_ADMIN_USERS</code> в формате <code>login:long_password,manager:second_long_password</code>. После изменения перезапустите сервисы командой <code>docker compose up -d --build</code>.</p>
+      <p class="muted">После спорных действий проверяйте <a href="{_token_href('/audit', token)}">Журнал</a>.</p>
+    </section>
+    """
+    return _base_html("Админы", body, token=token)
+
+
 def render_audit_html(logs: list[WebAdminActionLog], *, token: str = "") -> str:
     rows = "".join(
         f"""
@@ -1370,6 +1436,14 @@ async def monitoring(_: Annotated[None, Depends(require_web_admin)], request: Re
     async with SessionFactory() as session:
         summary = await collect_monitoring_summary(session)
     return HTMLResponse(render_monitoring_html(summary, token=""))
+
+
+@app.get("/admins", response_class=HTMLResponse)
+async def web_admins(_: Annotated[str, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    settings = get_settings()
+    async with SessionFactory() as session:
+        items = await collect_web_admin_activity(session, list(settings.web_admin_credentials.keys()))
+    return HTMLResponse(render_web_admins_html(items, token=""))
 
 
 @app.get("/audit", response_class=HTMLResponse)

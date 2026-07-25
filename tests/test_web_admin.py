@@ -33,6 +33,8 @@ from app.services.bot_settings import PaymentConfig, get_analysis_payment_config
 from app.services.sqlite_backup import BackupInfo, BackupVerification
 from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
+    WebAdminActivityItem,
+    collect_web_admin_activity,
     log_web_admin_action,
     render_audit_csv,
     render_audit_html,
@@ -54,6 +56,7 @@ from app.web_admin import (
     render_signals_csv,
     render_signals_html,
     render_user_detail_html,
+    render_web_admins_html,
     render_users_html,
     require_web_admin,
     update_web_payment_settings,
@@ -541,6 +544,61 @@ def test_render_monitoring_html_shows_operational_summary() -> None:
     assert "Excel error" in html
     assert "Изменение настроек" in html
     assert "/monitoring" in html
+
+
+
+def test_render_web_admins_html_shows_configured_admins_without_passwords() -> None:
+    html = render_web_admins_html([
+        WebAdminActivityItem("admin", True, "settings_update", datetime(2026, 7, 25, 9, 0), 3),
+        WebAdminActivityItem("old", False, "request_status_update", datetime(2026, 7, 24, 8, 0), 1),
+    ])
+
+    assert "Админы" in html
+    assert "admin" in html
+    assert "old" in html
+    assert "Изменение настроек" in html
+    assert "Нет, только в журнале" in html
+    assert "WEB_ADMIN_USERS" in html
+    assert "long_password" in html
+    assert "secret" not in html
+    assert "/admins" in html
+
+
+@pytest.mark.asyncio
+async def test_collect_web_admin_activity_uses_configured_users_and_audit_logs() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        session.add_all([
+            WebAdminActionLog(
+                actor_username="admin",
+                action="settings_update",
+                target_type="settings",
+                target_id="analysis",
+                details={},
+                created_at=datetime.utcnow(),
+            ),
+            WebAdminActionLog(
+                actor_username="old",
+                action="request_status_update",
+                target_type="subscription_request",
+                target_id="1",
+                details={},
+                created_at=datetime(2026, 1, 1, 12, 0),
+            ),
+        ])
+        await session.commit()
+
+        items = await collect_web_admin_activity(session, ["admin", "manager"])
+
+    await engine.dispose()
+
+    by_name = {item.username: item for item in items}
+    assert by_name["admin"].configured is True
+    assert by_name["admin"].last_action == "settings_update"
+    assert by_name["admin"].actions_7d == 1
+    assert by_name["manager"].configured is True
+    assert by_name["manager"].last_action is None
+    assert by_name["old"].configured is False
 
 
 def test_render_audit_html_shows_action_rows() -> None:
