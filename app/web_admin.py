@@ -143,6 +143,13 @@ async def has_any_web_admin_credentials(session) -> bool:
     return db_username is not None or bool(get_settings().web_admin_credentials)
 
 
+async def is_web_admin_superuser(session, username: str) -> bool:
+    user = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == username))
+    if user is not None:
+        return bool(user.is_active and user.is_super_admin)
+    return username in get_settings().web_admin_superusers
+
+
 async def require_web_admin(credentials: Annotated[HTTPBasicCredentials | None, Depends(security)]) -> str:
     async with SessionFactory() as session:
         if not await has_any_web_admin_credentials(session):
@@ -154,6 +161,13 @@ async def require_web_admin(credentials: Annotated[HTTPBasicCredentials | None, 
     if username is None:
         raise _auth_error()
     return username
+
+
+async def require_super_admin(actor_username: Annotated[str, Depends(require_web_admin)]) -> str:
+    async with SessionFactory() as session:
+        if not await is_web_admin_superuser(session, actor_username):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin access required")
+    return actor_username
 
 
 def _token_href(path: str, token: str = "") -> str:
@@ -209,6 +223,7 @@ LABELS = {
     "web_admin_create": "Создание web-админа",
     "web_admin_password_update": "Смена пароля web-админа",
     "web_admin_deactivate": "Отключение web-админа",
+    "web_admin_role_update": "Изменение роли web-админа",
     "web_admin": "Web-админ",
     "signal": "Сигнал",
     "subscription_request": "Заявка на подписку",
@@ -503,6 +518,7 @@ class WebAdminActivityItem:
     actions_7d: int = 0
     source: str = "WEB_ADMIN_USERS"
     is_active: bool = True
+    is_super_admin: bool = False
     last_login_at: datetime | None = None
 
 
@@ -533,16 +549,19 @@ async def collect_web_admin_activity(session, configured_usernames: list[str]) -
             source = "БД"
             configured = bool(db_user.is_active)
             is_active = bool(db_user.is_active)
+            is_super_admin = bool(db_user.is_super_admin)
             last_login_at = db_user.last_login_at
         elif username in env_usernames:
             source = "Аварийный .env"
             configured = True
             is_active = True
+            is_super_admin = username in get_settings().web_admin_superusers
             last_login_at = None
         else:
             source = "Журнал"
             configured = False
             is_active = False
+            is_super_admin = False
             last_login_at = None
         items.append(
             WebAdminActivityItem(
@@ -553,6 +572,7 @@ async def collect_web_admin_activity(session, configured_usernames: list[str]) -
                 actions_7d=actions_7d,
                 source=source,
                 is_active=is_active,
+                is_super_admin=is_super_admin,
                 last_login_at=last_login_at,
             )
         )
@@ -1296,6 +1316,7 @@ def render_web_admins_html(
           <td>{escape(item.username)}</td>
           <td>{'Активен' if item.configured else 'Нет, только в журнале'}</td>
           <td>{escape(item.source)}</td>
+          <td>{'Super-admin' if item.is_super_admin else 'Админ'}</td>
           <td>{_fmt_dt(item.last_login_at)}</td>
           <td>{escape(_label(item.last_action))}</td>
           <td>{_fmt_dt(item.last_action_at)}</td>
@@ -1304,11 +1325,11 @@ def render_web_admins_html(
         </tr>
         """
         for item in items
-    ) or '<tr><td colspan="8" class="muted">Web-админы не настроены.</td></tr>'
+    ) or '<tr><td colspan="9" class="muted">Web-админы не настроены.</td></tr>'
     body = f"""
     <section><h2>Админы</h2>{message_html}
-      <p class="muted">Пароли здесь не показываются. Основные web-админы хранятся в базе данных, а WEB_ADMIN_USERS остается аварийным доступом через .env.</p>
-      <table><thead><tr><th>Логин</th><th>Статус</th><th>Источник</th><th>Последний вход</th><th>Последнее действие</th><th>Когда</th><th>Действий за 7 дней</th><th>Доступ</th></tr></thead><tbody>{rows}</tbody></table>
+      <p class="muted">Пароли здесь не показываются. Основные web-админы хранятся в базе данных, а WEB_ADMIN_USERS остается аварийным super-admin доступом через .env.</p>
+      <table><thead><tr><th>Логин</th><th>Статус</th><th>Источник</th><th>Роль</th><th>Последний вход</th><th>Последнее действие</th><th>Когда</th><th>Действий за 7 дней</th><th>Доступ</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
     <section><h2>Добавить админа</h2>
       <form method="post" action="/admins" class="settings-form">
@@ -1316,6 +1337,7 @@ def render_web_admins_html(
         <input name="username" placeholder="manager" autocomplete="username" required minlength="3" maxlength="64">
         <label>Пароль</label>
         <input name="password" type="password" placeholder="Минимум 12 символов" autocomplete="new-password" required minlength="12">
+        <label><input name="is_super_admin" type="checkbox" value="1"> Super-admin: доступ к техническим разделам и управлению админами</label>
         <div class="actions"><button class="action-button" type="submit">Добавить админа</button></div>
       </form>
     </section>
@@ -1407,7 +1429,14 @@ def validate_web_admin_password(password: str) -> str:
     return password
 
 
-async def create_or_update_web_admin_user(session, username: str, password: str, *, actor_username: str) -> WebAdminUser:
+async def create_or_update_web_admin_user(
+    session,
+    username: str,
+    password: str,
+    *,
+    actor_username: str,
+    is_super_admin: bool = False,
+) -> WebAdminUser:
     username = validate_web_admin_username(username)
     password = validate_web_admin_password(password)
     user = await session.scalar(select(WebAdminUser).where(WebAdminUser.username == username))
@@ -1418,6 +1447,7 @@ async def create_or_update_web_admin_user(session, username: str, password: str,
             username=username,
             password_hash=hash_web_admin_password(password),
             is_active=True,
+            is_super_admin=is_super_admin,
             created_by=actor_username,
             updated_by=actor_username,
         )
@@ -1425,6 +1455,7 @@ async def create_or_update_web_admin_user(session, username: str, password: str,
     else:
         user.password_hash = hash_web_admin_password(password)
         user.is_active = True
+        user.is_super_admin = is_super_admin
         user.updated_by = actor_username
         user.updated_at = now
         action = "web_admin_password_update"
@@ -1434,7 +1465,7 @@ async def create_or_update_web_admin_user(session, username: str, password: str,
         action=action,
         target_type="web_admin",
         target_id=username,
-        details={"username": username},
+        details={"username": username, "is_super_admin": is_super_admin},
     )
     await session.commit()
     return user
@@ -1661,7 +1692,7 @@ async def monitoring(_: Annotated[None, Depends(require_web_admin)], request: Re
 
 
 @app.get("/admins", response_class=HTMLResponse)
-async def web_admins(actor_username: Annotated[str, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+async def web_admins(actor_username: Annotated[str, Depends(require_super_admin)], request: Request) -> HTMLResponse:
     settings = get_settings()
     async with SessionFactory() as session:
         items = await collect_web_admin_activity(session, list(settings.web_admin_credentials.keys()))
@@ -1670,7 +1701,7 @@ async def web_admins(actor_username: Annotated[str, Depends(require_web_admin)],
 
 
 @app.post("/admins")
-async def web_admin_create(request: Request, actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+async def web_admin_create(request: Request, actor_username: Annotated[str, Depends(require_super_admin)]) -> RedirectResponse:
     fields = await _read_form_fields(request)
     try:
         async with SessionFactory() as session:
@@ -1679,6 +1710,7 @@ async def web_admin_create(request: Request, actor_username: Annotated[str, Depe
                 fields.get("username", ""),
                 fields.get("password", ""),
                 actor_username=actor_username,
+                is_super_admin=fields.get("is_super_admin") == "1",
             )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -1686,7 +1718,7 @@ async def web_admin_create(request: Request, actor_username: Annotated[str, Depe
 
 
 @app.post("/admins/{username}/password")
-async def web_admin_password_update(username: str, request: Request, actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+async def web_admin_password_update(username: str, request: Request, actor_username: Annotated[str, Depends(require_super_admin)]) -> RedirectResponse:
     fields = await _read_form_fields(request)
     try:
         async with SessionFactory() as session:
@@ -1699,7 +1731,7 @@ async def web_admin_password_update(username: str, request: Request, actor_usern
 
 
 @app.post("/admins/{username}/deactivate")
-async def web_admin_deactivate(username: str, actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+async def web_admin_deactivate(username: str, actor_username: Annotated[str, Depends(require_super_admin)]) -> RedirectResponse:
     try:
         async with SessionFactory() as session:
             updated = await deactivate_web_admin_user(session, username, actor_username=actor_username)
@@ -1962,13 +1994,13 @@ async def requests_export(_: Annotated[None, Depends(require_web_admin)], reques
 
 
 @app.get("/maintenance", response_class=HTMLResponse)
-async def maintenance(_: Annotated[None, Depends(require_web_admin)]) -> HTMLResponse:
+async def maintenance(_: Annotated[None, Depends(require_super_admin)]) -> HTMLResponse:
     summary = collect_maintenance_summary(get_settings())
     return HTMLResponse(render_maintenance_html(summary))
 
 
 @app.post("/maintenance/backup", response_class=HTMLResponse)
-async def maintenance_backup(actor_username: Annotated[str, Depends(require_web_admin)]) -> HTMLResponse:
+async def maintenance_backup(actor_username: Annotated[str, Depends(require_super_admin)]) -> HTMLResponse:
     settings = get_settings()
     try:
         result = create_sqlite_backup(settings.database_url, settings.data_dir, keep=settings.sqlite_backup_keep)
@@ -1991,7 +2023,7 @@ async def maintenance_backup(actor_username: Annotated[str, Depends(require_web_
 
 
 @app.post("/maintenance/backup/check", response_class=HTMLResponse)
-async def maintenance_backup_check(actor_username: Annotated[str, Depends(require_web_admin)]) -> HTMLResponse:
+async def maintenance_backup_check(actor_username: Annotated[str, Depends(require_super_admin)]) -> HTMLResponse:
     settings = get_settings()
     backups = list(summary_backup for summary_backup in collect_maintenance_summary(settings).backups)
     if not backups:

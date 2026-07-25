@@ -29,8 +29,22 @@ async def _ensure_user_access_columns(connection) -> None:
             await connection.execute(text(f"ALTER TABLE user_accesses ADD COLUMN {name} {definition}"))
 
 
+async def _ensure_web_admin_user_columns(connection) -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+    rows = await connection.execute(text("PRAGMA table_info(web_admin_users)"))
+    existing = {row[1] for row in rows.fetchall()}
+    columns = {
+        "is_super_admin": "BOOLEAN DEFAULT 0",
+    }
+    for name, definition in columns.items():
+        if existing and name not in existing:
+            await connection.execute(text(f"ALTER TABLE web_admin_users ADD COLUMN {name} {definition}"))
+
+
 async def init_db() -> None:
     settings.data_dir
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await _ensure_user_access_columns(connection)
+        await _ensure_web_admin_user_columns(connection)

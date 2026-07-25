@@ -99,3 +99,22 @@ def test_settings_web_admin_credentials_falls_back_to_single_admin() -> None:
     )
 
     assert settings.web_admin_credentials == {"admin": "secret"}
+
+
+def test_settings_web_admin_superusers_default_to_env_admins() -> None:
+    settings = Settings(
+        BOT_TOKEN="token",
+        WEB_ADMIN_USERS="admin:secret, manager:second",
+    )
+
+    assert settings.web_admin_superusers == {"admin", "manager"}
+
+
+def test_settings_web_admin_superusers_can_be_explicit() -> None:
+    settings = Settings(
+        BOT_TOKEN="token",
+        WEB_ADMIN_USERS="admin:secret, manager:second",
+        WEB_ADMIN_SUPERUSERS="admin",
+    )
+
+    assert settings.web_admin_superusers == {"admin"}

@@ -39,6 +39,7 @@ from app.web_admin import (
     create_or_update_web_admin_user,
     deactivate_web_admin_user,
     hash_web_admin_password,
+    is_web_admin_superuser,
     log_web_admin_action,
     render_audit_csv,
     render_audit_html,
@@ -555,8 +556,8 @@ def test_render_monitoring_html_shows_operational_summary() -> None:
 
 def test_render_web_admins_html_shows_configured_admins_without_passwords() -> None:
     html = render_web_admins_html([
-        WebAdminActivityItem("admin", True, "settings_update", datetime(2026, 7, 25, 9, 0), 3, source="БД"),
-        WebAdminActivityItem("env", True, source="Аварийный .env"),
+        WebAdminActivityItem("admin", True, "settings_update", datetime(2026, 7, 25, 9, 0), 3, source="БД", is_super_admin=True),
+        WebAdminActivityItem("env", True, source="Аварийный .env", is_super_admin=True),
         WebAdminActivityItem("old", False, "request_status_update", datetime(2026, 7, 24, 8, 0), 1, source="Журнал"),
     ], current_username="admin", message="admin_saved")
 
@@ -568,6 +569,8 @@ def test_render_web_admins_html_shows_configured_admins_without_passwords() -> N
     assert "Нет, только в журнале" in html
     assert "БД" in html
     assert "Аварийный .env" in html
+    assert "Super-admin" in html
+    assert "техническим разделам" in html
     assert "Добавить админа" in html
     assert "Сменить пароль" in html
     assert "Свой доступ не отключаем" in html
@@ -601,7 +604,7 @@ async def test_collect_web_admin_activity_uses_configured_users_and_audit_logs()
         ])
         await session.commit()
 
-        session.add(WebAdminUser(username="dbadmin", password_hash=hash_web_admin_password("very-long-password"), is_active=True))
+        session.add(WebAdminUser(username="dbadmin", password_hash=hash_web_admin_password("very-long-password"), is_active=True, is_super_admin=True))
         session.add(WebAdminUser(username="disabled", password_hash=hash_web_admin_password("very-long-password"), is_active=False))
         await session.commit()
 
@@ -618,6 +621,7 @@ async def test_collect_web_admin_activity_uses_configured_users_and_audit_logs()
     assert by_name["manager"].last_action is None
     assert by_name["dbadmin"].configured is True
     assert by_name["dbadmin"].source == "БД"
+    assert by_name["dbadmin"].is_super_admin is True
     assert by_name["disabled"].configured is False
     assert by_name["old"].configured is False
 
@@ -826,7 +830,7 @@ async def test_authenticate_web_admin_uses_database_user_and_updates_login(monke
 
 @pytest.mark.asyncio
 async def test_authenticate_web_admin_falls_back_to_env_credentials(monkeypatch) -> None:
-    monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={"root": "env-password"}))
+    monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={"root": "env-password"}, web_admin_superusers={"root"}))
     engine, factory = await make_session()
     async with factory() as session:
         username = await authenticate_web_admin(session, HTTPBasicCredentials(username="root", password="env-password"))
@@ -837,14 +841,21 @@ async def test_authenticate_web_admin_falls_back_to_env_credentials(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_manage_web_admin_users_create_password_and_deactivate() -> None:
+async def test_manage_web_admin_users_create_password_role_and_deactivate() -> None:
     engine, factory = await make_session()
     async with factory() as session:
-        user = await create_or_update_web_admin_user(session, "manager", "very-secret-password", actor_username="root")
+        user = await create_or_update_web_admin_user(
+            session,
+            "manager",
+            "very-secret-password",
+            actor_username="root",
+            is_super_admin=True,
+        )
         created_hash = user.password_hash
 
         assert user.username == "manager"
         assert user.is_active is True
+        assert user.is_super_admin is True
         assert verify_web_admin_password("very-secret-password", user.password_hash) is True
 
         updated = await update_web_admin_password(session, "manager", "another-secret-password", actor_username="root")
@@ -860,6 +871,27 @@ async def test_manage_web_admin_users_create_password_and_deactivate() -> None:
     assert refreshed.password_hash != created_hash
     assert refreshed.is_active is False
     assert [log.action for log in logs] == ["web_admin_create", "web_admin_password_update", "web_admin_deactivate"]
+    assert logs[0].details["is_super_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_is_web_admin_superuser_checks_db_role_and_env_fallback(monkeypatch) -> None:
+    monkeypatch.setattr("app.web_admin.get_settings", lambda: SimpleNamespace(web_admin_credentials={"root": "env-password"}, web_admin_superusers={"root"}))
+    engine, factory = await make_session()
+    async with factory() as session:
+        session.add_all([
+            WebAdminUser(username="super", password_hash=hash_web_admin_password("very-secret-password"), is_active=True, is_super_admin=True),
+            WebAdminUser(username="manager", password_hash=hash_web_admin_password("very-secret-password"), is_active=True, is_super_admin=False),
+            WebAdminUser(username="disabled", password_hash=hash_web_admin_password("very-secret-password"), is_active=False, is_super_admin=True),
+        ])
+        await session.commit()
+
+        assert await is_web_admin_superuser(session, "super") is True
+        assert await is_web_admin_superuser(session, "manager") is False
+        assert await is_web_admin_superuser(session, "disabled") is False
+        assert await is_web_admin_superuser(session, "root") is True
+
+    await engine.dispose()
 
 
 async def make_session():

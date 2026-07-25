@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     web_admin_users_text: str = Field(default="", alias="WEB_ADMIN_USERS")
     web_admin_username: str = Field(default="", alias="WEB_ADMIN_USERNAME")
     web_admin_password: str = Field(default="", alias="WEB_ADMIN_PASSWORD")
+    web_admin_superusers_text: str = Field(default="", alias="WEB_ADMIN_SUPERUSERS")
     analysis_payment_details: str = Field(default="Реквизиты для оплаты уточните у специалиста.", alias="ANALYSIS_PAYMENT_DETAILS")
     analysis_specialist_contact: str = Field(default="@your_specialist", alias="ANALYSIS_SPECIALIST_CONTACT")
 
@@ -41,6 +42,11 @@ class Settings(BaseSettings):
         if fallback_username and fallback_password:
             credentials.setdefault(fallback_username, fallback_password)
         return credentials
+
+    @property
+    def web_admin_superusers(self) -> set[str]:
+        configured = {item.strip() for item in self.web_admin_superusers_text.split(",") if item.strip()}
+        return configured or set(self.web_admin_credentials)
 
     @property
     def admin_ids(self) -> list[int]:

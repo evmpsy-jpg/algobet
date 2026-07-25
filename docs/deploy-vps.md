@@ -158,12 +158,14 @@ docker compose down
 
 ## Web Admin Dashboard
 
-The Docker Compose setup includes a web admin service on port `8000`. It uses HTTP Basic Auth. Normal web admins are managed in the database from the `Админы` page; `WEB_ADMIN_USERS` in `.env` remains an emergency fallback login. The web admin can view data and perform operational actions: update request statuses, manage user access, edit payment/contact settings, fix signal results, manage web admins, view monitoring, and export CSV reports.
+The Docker Compose setup includes a web admin service on port `8000`. It uses HTTP Basic Auth. Normal web admins are managed in the database from the `Админы` page; `WEB_ADMIN_USERS` in `.env` remains an emergency super-admin fallback login. The web admin can view data and perform operational actions: update request statuses, manage user access, edit payment/contact settings, fix signal results, manage web admins, view monitoring, and export CSV reports.
 
 Add at least one emergency admin credential to `/opt/algobet/.env`:
 
 ```env
-WEB_ADMIN_USERS=admin:PASTE_LONG_RANDOM_PASSWORD_HERE,manager:PASTE_SECOND_LONG_PASSWORD_HERE
+WEB_ADMIN_USERS=admin:PASTE_LONG_RANDOM_PASSWORD_HERE
+# Optional: when WEB_ADMIN_USERS has several logins, list only emergency super-admins here.
+WEB_ADMIN_SUPERUSERS=admin
 ```
 
 Start both services:
@@ -187,7 +189,7 @@ Open the web admin:
 http://217.114.5.208:48291/
 ```
 
-Use a database web-admin login/password, or one of the emergency `WEB_ADMIN_USERS` pairs from `/opt/algobet/.env`, when the browser asks for credentials. Payment remains manual: users create requests, admins confirm payment and activate access in the admin panel.
+Use a database web-admin login/password, or one of the emergency `WEB_ADMIN_USERS` pairs from `/opt/algobet/.env`, when the browser asks for credentials. Only super-admins can open `Админы` and `Обслуживание`. Payment remains manual: users create requests, admins confirm payment and activate access in the admin panel.
 
 Useful checks:
 
@@ -210,7 +212,8 @@ admin.example.com -> 217.114.5.208
 2. Configure an emergency web admin in `/opt/algobet/.env`, then manage regular admins from the `Админы` page:
 
 ```env
-WEB_ADMIN_USERS=evgeniy:LONG_PASSWORD_1,manager:LONG_PASSWORD_2
+WEB_ADMIN_USERS=evgeniy:LONG_PASSWORD_1
+WEB_ADMIN_SUPERUSERS=evgeniy
 ```
 
 3. Install nginx and certbot:
@@ -249,4 +252,4 @@ Then open:
 https://admin.example.com/
 ```
 
-The browser will ask for a web-admin login and password. Regular admins are stored in the database; `WEB_ADMIN_USERS` remains the emergency fallback.
+The browser will ask for a web-admin login and password. Regular admins are stored in the database; `WEB_ADMIN_USERS` remains the emergency super-admin fallback.
