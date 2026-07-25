@@ -29,6 +29,7 @@ from app.services.dashboard import (
     SignalDetail,
     SignalListItem,
     UserDetail,
+    UserDeliveryListItem,
     UserListItem,
 )
 from app.services.bot_settings import PaymentConfig, SystemRuntimeSettings, get_analysis_payment_config, get_subscription_payment_config
@@ -501,7 +502,28 @@ def test_render_user_detail_html_shows_related_deliveries_and_requests() -> None
         sent_deliveries=3,
         failed_deliveries=1,
     )
-    detail = UserDetail(item=user, deliveries=[], requests=[RequestListItem("analysis", 4, "new", 315715137, "admin", "Match <A>", datetime(2026, 7, 24, 11, 0))])
+    delivery = UserDeliveryListItem(
+        id=5,
+        signal_id=11,
+        status='sent',
+        match_title='Player <One> - Player Two',
+        signal_group='vip',
+        sent_at=datetime(2026, 7, 24, 12, 10),
+        error_text=None,
+        created_at=datetime(2026, 7, 24, 12, 0),
+        signal_status='sent',
+        result_status='won',
+    )
+    detail = UserDetail(
+        item=user,
+        deliveries=[delivery],
+        requests=[RequestListItem('analysis', 4, 'new', 315715137, 'admin', 'Match <A>', datetime(2026, 7, 24, 11, 0))],
+        delivery_status_counts={'sent': 3, 'failed': 1},
+        signal_group_counts={'vip': 1},
+        result_status_counts={'won': 1},
+        request_status_counts={'new': 1},
+        request_kind_counts={'analysis': 1},
+    )
 
     html = render_user_detail_html(detail, token="secret")
 
@@ -513,6 +535,14 @@ def test_render_user_detail_html_shows_related_deliveries_and_requests() -> None
     assert "VIP 99% · 10 сигналов · 2 500р" in html
     assert "Match &lt;A&gt;" in html
     assert "/requests/analysis/4" in html
+    assert '/deliveries?user_id=1' in html
+    assert '/deliveries?status=failed' in html
+    assert 'user_id=1' in html
+    assert '/deliveries/export.csv?user_id=1' in html
+    assert 'Результаты сигналов' in html
+    assert 'Player &lt;One&gt; - Player Two' in html
+    assert 'Выиграл' in html
+    assert '/signals/11' in html
 
 
 def test_render_request_detail_html_shows_payment_and_contact() -> None:

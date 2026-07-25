@@ -1276,19 +1276,32 @@ def render_signal_detail_html(detail: SignalDetail, *, token: str = "") -> str:
 
 
 def render_user_detail_html(detail: UserDetail, *, token: str = "") -> str:
+    item = detail.item
+    deliveries_href = _token_href(_deliveries_path(user_id=item.id), token)
+    deliveries_csv_href = _token_href(_deliveries_path(user_id=item.id, base="/deliveries/export.csv"), token)
+    failed_href = _token_href(_deliveries_path("failed", user_id=item.id), token)
     delivery_rows = "".join(
         f"""
-        <tr><td>#{delivery.id}</td><td><a href="{_token_href(f'/signals/{delivery.signal_id}', token)}">#{delivery.signal_id}</a></td><td>{escape(_label(delivery.status))}</td><td>{escape(delivery.signal_group.upper())}</td><td>{escape(delivery.match_title)}</td><td>{_fmt_dt(delivery.sent_at)}</td><td>{escape(delivery.error_text or '-')}</td></tr>
+        <tr>
+          <td>#{delivery.id}</td>
+          <td><a href="{_token_href(f'/signals/{delivery.signal_id}', token)}">#{delivery.signal_id}</a><div class="muted">{escape(_label(delivery.signal_status))}</div></td>
+          <td>{escape(_label(delivery.status))}</td>
+          <td>{escape(delivery.signal_group.upper())}</td>
+          <td>{escape(delivery.match_title)}</td>
+          <td>{escape(_label(delivery.result_status))}</td>
+          <td>{_fmt_dt(delivery.created_at)}</td>
+          <td>{_fmt_dt(delivery.sent_at)}</td>
+          <td>{escape((delivery.error_text or '-')[:180])}</td>
+        </tr>
         """
         for delivery in detail.deliveries
-    ) or '<tr><td colspan="7" class="muted">Доставок пока нет.</td></tr>'
+    ) or '<tr><td colspan="9" class="muted">Доставок пока нет.</td></tr>'
     request_rows = "".join(
         f"""
         <tr><td>{escape(_label(request.kind))}</td><td><a href="{_token_href(f'/requests/{request.kind}/{request.id}', token)}">#{request.id}</a></td><td>{escape(_label(request.status))}</td><td>{escape(request.title[:160])}</td><td>{_fmt_dt(request.created_at)}</td></tr>
         """
         for request in detail.requests
     ) or '<tr><td colspan="5" class="muted">Заявок пока нет.</td></tr>'
-    item = detail.item
     body = f"""
     <section><h2>Пользователь #{item.id}</h2>
       <dl class="details">
@@ -1301,9 +1314,19 @@ def render_user_detail_html(detail: UserDetail, *, token: str = "") -> str:
         <dt>Доступ до</dt><dd>{_fmt_dt(item.active_until)}</dd>
         <dt>Доставки</dt><dd>{item.sent_deliveries} отправлено / {item.failed_deliveries} ошибок</dd>
       </dl>
+      <div class="actions">
+        <a class="button" href="{deliveries_href}">Все доставки</a>
+        <a class="button" href="{failed_href}">Ошибки доставки</a>
+        <a class="button" href="{deliveries_csv_href}">CSV доставок</a>
+      </div>
     </section>
-    <section><h2>Управление доступом</h2>{_user_access_buttons(item.id)}</section>
-    <section><h2>Последние доставки</h2><table><thead><tr><th>ID</th><th>Сигнал</th><th>Статус</th><th>Группа</th><th>Матч</th><th>Отправлено</th><th>Ошибка</th></tr></thead><tbody>{delivery_rows}</tbody></table></section>
+    <div class="sections">
+      <section><h2>Доставки</h2><div class="pills">{_fmt_counts(detail.delivery_status_counts)}{_fmt_counts(detail.signal_group_counts)}</div></section>
+      <section><h2>Результаты сигналов</h2><div class="pills">{_fmt_counts(detail.result_status_counts)}</div></section>
+      <section><h2>Заявки</h2><div class="pills">{_fmt_counts(detail.request_kind_counts)}{_fmt_counts(detail.request_status_counts)}</div></section>
+      <section><h2>Управление доступом</h2>{_user_access_buttons(item.id)}</section>
+    </div>
+    <section><h2>Последние доставки</h2><table><thead><tr><th>ID</th><th>Сигнал</th><th>Доставка</th><th>Группа</th><th>Матч</th><th>Результат</th><th>Создано</th><th>Отправлено</th><th>Ошибка</th></tr></thead><tbody>{delivery_rows}</tbody></table></section>
     <section><h2>Заявки</h2><table><thead><tr><th>Тип</th><th>ID</th><th>Статус</th><th>Название</th><th>Создано</th></tr></thead><tbody>{request_rows}</tbody></table></section>
     """
     return _base_html(f"Пользователь #{item.id}", body, token=token)

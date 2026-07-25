@@ -176,6 +176,9 @@ class UserDeliveryListItem:
     signal_group: str
     sent_at: datetime | None
     error_text: str | None
+    created_at: datetime | None = None
+    signal_status: str | None = None
+    result_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +186,11 @@ class UserDetail:
     item: UserListItem
     deliveries: list[UserDeliveryListItem]
     requests: list[RequestListItem]
+    delivery_status_counts: dict[str, int] = field(default_factory=dict)
+    signal_group_counts: dict[str, int] = field(default_factory=dict)
+    result_status_counts: dict[str, int] = field(default_factory=dict)
+    request_status_counts: dict[str, int] = field(default_factory=dict)
+    request_kind_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1154,9 +1162,10 @@ async def collect_user_detail(session: AsyncSession, user_id: int) -> UserDetail
     )
     delivery_rows = (
         await session.execute(
-            select(SignalDelivery, ScheduledSignal, Match)
+            select(SignalDelivery, ScheduledSignal, Match, SignalResult)
             .join(ScheduledSignal, ScheduledSignal.id == SignalDelivery.signal_id)
             .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
             .where(SignalDelivery.user_id == user.id)
             .order_by(desc(SignalDelivery.id))
             .limit(20)
@@ -1171,8 +1180,11 @@ async def collect_user_detail(session: AsyncSession, user_id: int) -> UserDetail
             signal_group=str((signal.signal_payload or {}).get("signal_group") or "unknown"),
             sent_at=delivery.sent_at,
             error_text=delivery.error_text,
+            created_at=delivery.created_at,
+            signal_status=signal.status,
+            result_status=result.status if result is not None else None,
         )
-        for delivery, signal, match in delivery_rows
+        for delivery, signal, match, result in delivery_rows
     ]
     subscriptions = (
         await session.scalars(
@@ -1208,7 +1220,22 @@ async def collect_user_detail(session: AsyncSession, user_id: int) -> UserDetail
         )
         for request in analyses
     )
-    return UserDetail(item=item, deliveries=deliveries, requests=sorted(requests, key=lambda value: value.created_at, reverse=True))
+    sorted_requests = sorted(requests, key=lambda value: value.created_at, reverse=True)
+    delivery_status_counts = dict(Counter(delivery.status for delivery in deliveries))
+    signal_group_counts = dict(Counter(delivery.signal_group for delivery in deliveries))
+    result_status_counts = dict(Counter(delivery.result_status or "unknown" for delivery in deliveries))
+    request_status_counts = dict(Counter(request.status for request in sorted_requests))
+    request_kind_counts = dict(Counter(request.kind for request in sorted_requests))
+    return UserDetail(
+        item=item,
+        deliveries=deliveries,
+        requests=sorted_requests,
+        delivery_status_counts=delivery_status_counts,
+        signal_group_counts=signal_group_counts,
+        result_status_counts=result_status_counts,
+        request_status_counts=request_status_counts,
+        request_kind_counts=request_kind_counts,
+    )
 
 
 async def collect_request_detail(session: AsyncSession, kind: str, request_id: int) -> RequestDetail | None:

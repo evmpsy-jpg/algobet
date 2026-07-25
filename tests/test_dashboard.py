@@ -230,6 +230,13 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert user_detail is not None
     assert user_detail.item.telegram_id == 1001
     assert len(user_detail.deliveries) == 1
+    assert user_detail.deliveries[0].signal_status == 'sent'
+    assert user_detail.deliveries[0].result_status == 'won'
+    assert user_detail.delivery_status_counts == {'sent': 1}
+    assert user_detail.signal_group_counts == {'vip': 1}
+    assert user_detail.result_status_counts == {'won': 1}
+    assert user_detail.request_status_counts == {'new': 2}
+    assert user_detail.request_kind_counts == {'subscription': 1, 'analysis': 1}
     assert [item.kind for item in user_detail.requests] == ["subscription", "analysis"]
     assert subscription_detail is not None
     assert subscription_detail.item.kind == "subscription"
