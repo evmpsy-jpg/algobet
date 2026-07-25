@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +29,7 @@ from app.services.dashboard import (
     UserListItem,
 )
 from app.services.bot_settings import PaymentConfig, get_analysis_payment_config, get_subscription_payment_config
+from app.services.sqlite_backup import BackupInfo, BackupVerification
 from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
     log_web_admin_action,
@@ -675,14 +677,25 @@ def test_render_maintenance_html_shows_storage_and_backup_settings() -> None:
             sqlite_backup_enabled=True,
             sqlite_backup_interval_hours=24,
             sqlite_backup_keep=10,
-        )
+            backups=(
+                BackupInfo(path=Path("data/backups/algobet-20260725-080000.db"), size_bytes=4096, created_at=datetime(2026, 7, 25, 8, 0)),
+            ),
+        ),
+        message="Backup создан",
+        backup_check=BackupVerification(path=Path("data/backups/algobet-20260725-080000.db"), ok=True, message="ok", table_count=12),
     )
 
     assert "Обслуживание" in html
     assert "data/algobet.db" in html
     assert "2.0 KB" in html
     assert "Включен" in html
-    assert "/maintenance" in html
+    assert "Backup SQLite" in html
+    assert "Сделать backup сейчас" in html
+    assert "Проверить последний backup" in html
+    assert "algobet-20260725-080000.db" in html
+    assert "Backup исправен" in html
+    assert "Backup создан" in html
+    assert "/maintenance/backup" in html
 
 
 def test_require_web_admin_accepts_basic_credentials_for_multiple_admins(monkeypatch) -> None:

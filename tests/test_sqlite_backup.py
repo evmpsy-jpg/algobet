@@ -12,6 +12,7 @@ from app.services.sqlite_backup import (
     latest_sqlite_backup,
     list_sqlite_backups,
     sqlite_database_path,
+    verify_sqlite_backup,
 )
 
 
@@ -66,3 +67,22 @@ def test_sqlite_backup_rejects_external_database(tmp_path) -> None:
     assert sqlite_database_path("postgresql+asyncpg://user:pass@db/algobet") is None
     with pytest.raises(ValueError):
         create_sqlite_backup("postgresql+asyncpg://user:pass@db/algobet", tmp_path)
+
+
+def test_verify_sqlite_backup_checks_integrity(tmp_path) -> None:
+    db_path = tmp_path / "backup.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("create table users (id integer primary key)")
+
+    result = verify_sqlite_backup(db_path)
+
+    assert result.ok is True
+    assert result.table_count == 1
+    assert "ok" in result.message.lower()
+
+
+def test_verify_sqlite_backup_reports_missing_file(tmp_path) -> None:
+    result = verify_sqlite_backup(tmp_path / "missing.db")
+
+    assert result.ok is False
+    assert "не найден" in result.message

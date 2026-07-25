@@ -21,6 +21,7 @@ from app.database.models import MatchAnalysisRequest, ScheduledSignal, SignalRes
 from app.database.session import SessionFactory, init_db
 from app.services.access import disable_access, grant_subscription_access, grant_subscription_plan_access, grant_trial_access
 from app.services.signal_sender import process_delivery_now
+from app.services.sqlite_backup import BackupVerification, create_sqlite_backup, verify_sqlite_backup
 from app.services.bot_settings import (
     ANALYSIS_PAYMENT_DETAILS_KEY,
     ANALYSIS_SPECIALIST_CONTACT_KEY,
@@ -147,6 +148,8 @@ LABELS = {
     "request_status_update": "Изменение статуса заявки",
     "user_access_update": "Изменение доступа пользователя",
     "settings_update": "Изменение настроек",
+    "maintenance_backup_create": "Создание backup",
+    "maintenance_backup_check": "Проверка backup",
     "signal": "Сигнал",
     "subscription_request": "Заявка на подписку",
     "analysis_request": "Заявка на анализ",
@@ -1196,10 +1199,52 @@ async def _read_form_fields(request: Request) -> dict[str, str]:
     return {key: items[-1] if items else "" for key, items in values.items()}
 
 
-def render_maintenance_html(summary: MaintenanceSummary, *, token: str = "") -> str:
+def _backup_rows(summary: MaintenanceSummary) -> str:
+    rows = []
+    for backup in summary.backups[:10]:
+        rows.append(
+            f"""
+            <tr>
+              <td>{escape(backup.path.name)}</td>
+              <td>{escape(str(backup.path))}</td>
+              <td>{_fmt_bytes(backup.size_bytes)}</td>
+              <td>{_fmt_dt(backup.created_at)}</td>
+            </tr>
+            """
+        )
+    return "".join(rows) or '<tr><td colspan="4" class="muted">Backup-копий пока нет.</td></tr>'
+
+
+def _backup_check_message(check: BackupVerification | None) -> str:
+    if check is None:
+        return ""
+    status_text = "Backup исправен" if check.ok else "Backup не прошел проверку"
+    return (
+        f'<p class="pill"><b>{status_text}</b>: {escape(check.path.name)} · '
+        f'{escape(check.message)} · таблиц: {check.table_count}</p>'
+    )
+
+
+def render_maintenance_html(
+    summary: MaintenanceSummary,
+    *,
+    token: str = "",
+    message: str = "",
+    backup_check: BackupVerification | None = None,
+) -> str:
     enabled = _label("enabled" if summary.sqlite_backup_enabled else "disabled")
+    message_html = f'<p class="pill"><b>{escape(message)}</b></p>' if message else ""
+    check_html = _backup_check_message(backup_check)
+    backup_actions = ""
+    if summary.database_path:
+        backup_actions = """
+        <div class="actions">
+          <form method="post" action="/maintenance/backup"><button class="action-button" type="submit">Сделать backup сейчас</button></form>
+          <form method="post" action="/maintenance/backup/check"><button class="action-button" type="submit">Проверить последний backup</button></form>
+        </div>
+        """
     body = f"""
-    <section><h2>Обслуживание</h2>
+    <section><h2>Обслуживание</h2>{message_html}{check_html}
       <dl class="details">
         <dt>База данных</dt><dd>{escape(summary.database_path or '-')}</dd>
         <dt>Размер БД</dt><dd>{_fmt_bytes(summary.database_size_bytes)}</dd>
@@ -1212,6 +1257,10 @@ def render_maintenance_html(summary: MaintenanceSummary, *, token: str = "") -> 
         <dt>Размер backup</dt><dd>{_fmt_bytes(summary.latest_backup_size_bytes)}</dd>
         <dt>Дата backup</dt><dd>{_fmt_dt(summary.latest_backup_created_at)}</dd>
       </dl>
+      {backup_actions}
+    </section>
+    <section><h2>Backup SQLite</h2>
+      <table><thead><tr><th>Файл</th><th>Путь</th><th>Размер</th><th>Дата</th></tr></thead><tbody>{_backup_rows(summary)}</tbody></table>
     </section>
     """
     return _base_html("Обслуживание", body, token=token)
@@ -1551,6 +1600,51 @@ async def requests_export(_: Annotated[None, Depends(require_web_admin)], reques
 async def maintenance(_: Annotated[None, Depends(require_web_admin)]) -> HTMLResponse:
     summary = collect_maintenance_summary(get_settings())
     return HTMLResponse(render_maintenance_html(summary))
+
+
+@app.post("/maintenance/backup", response_class=HTMLResponse)
+async def maintenance_backup(actor_username: Annotated[str, Depends(require_web_admin)]) -> HTMLResponse:
+    settings = get_settings()
+    try:
+        result = create_sqlite_backup(settings.database_url, settings.data_dir, keep=settings.sqlite_backup_keep)
+    except (FileNotFoundError, ValueError) as exc:
+        summary = collect_maintenance_summary(settings)
+        return HTMLResponse(render_maintenance_html(summary, message=f"Ошибка backup: {exc}"), status_code=status.HTTP_400_BAD_REQUEST)
+    async with SessionFactory() as session:
+        await log_web_admin_action(
+            session,
+            actor_username=actor_username,
+            action="maintenance_backup_create",
+            target_type="maintenance",
+            target_id=result.created.path.name,
+            details={"path": str(result.created.path), "size_bytes": result.created.size_bytes, "deleted": len(result.deleted)},
+        )
+        await session.commit()
+    summary = collect_maintenance_summary(settings)
+    message = f"Backup создан: {result.created.path.name} ({_fmt_bytes(result.created.size_bytes)})"
+    return HTMLResponse(render_maintenance_html(summary, message=message))
+
+
+@app.post("/maintenance/backup/check", response_class=HTMLResponse)
+async def maintenance_backup_check(actor_username: Annotated[str, Depends(require_web_admin)]) -> HTMLResponse:
+    settings = get_settings()
+    backups = list(summary_backup for summary_backup in collect_maintenance_summary(settings).backups)
+    if not backups:
+        summary = collect_maintenance_summary(settings)
+        return HTMLResponse(render_maintenance_html(summary, message="Backup-копий пока нет."), status_code=status.HTTP_400_BAD_REQUEST)
+    check = verify_sqlite_backup(backups[0].path)
+    async with SessionFactory() as session:
+        await log_web_admin_action(
+            session,
+            actor_username=actor_username,
+            action="maintenance_backup_check",
+            target_type="maintenance",
+            target_id=backups[0].path.name,
+            details={"path": str(backups[0].path), "ok": check.ok, "message": check.message, "table_count": check.table_count},
+        )
+        await session.commit()
+    summary = collect_maintenance_summary(settings)
+    return HTMLResponse(render_maintenance_html(summary, backup_check=check), status_code=status.HTTP_200_OK if check.ok else status.HTTP_400_BAD_REQUEST)
 
 
 @app.get("/docs", response_class=HTMLResponse)

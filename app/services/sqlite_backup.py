@@ -24,6 +24,14 @@ class BackupResult:
     deleted: tuple[Path, ...]
 
 
+@dataclass(frozen=True)
+class BackupVerification:
+    path: Path
+    ok: bool
+    message: str
+    table_count: int = 0
+
+
 def sqlite_database_path(database_url: str) -> Path | None:
     prefix = "sqlite+aiosqlite:///"
     if not database_url.startswith(prefix):
@@ -93,3 +101,24 @@ def create_sqlite_backup(database_url: str, data_dir: Path, *, keep: int = DEFAU
         ),
         deleted=tuple(deleted),
     )
+
+
+def verify_sqlite_backup(path: Path) -> BackupVerification:
+    if not path.exists():
+        return BackupVerification(path=path, ok=False, message="Файл backup не найден.")
+    if not path.is_file():
+        return BackupVerification(path=path, ok=False, message="Путь backup не является файлом.")
+
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+            integrity = connection.execute("PRAGMA integrity_check").fetchone()
+            table_count = int(
+                connection.execute("select count(*) from sqlite_master where type = 'table'").fetchone()[0]
+            )
+    except sqlite3.Error as exc:
+        return BackupVerification(path=path, ok=False, message=f"SQLite ошибка: {exc}")
+
+    result = str(integrity[0] if integrity else "unknown")
+    if result.lower() != "ok":
+        return BackupVerification(path=path, ok=False, message=f"Integrity check: {result}", table_count=table_count)
+    return BackupVerification(path=path, ok=True, message="Backup читается, integrity_check: ok.", table_count=table_count)

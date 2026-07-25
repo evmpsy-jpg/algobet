@@ -363,4 +363,5 @@ def test_collect_maintenance_summary_shows_storage_and_backup_settings(tmp_path)
     assert summary.uploads_size_bytes == len(b"upload")
     assert summary.sqlite_backup_enabled is True
     assert summary.latest_backup_path is None
+    assert summary.backups == ()
 

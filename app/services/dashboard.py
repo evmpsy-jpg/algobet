@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.sqlite_backup import latest_sqlite_backup, sqlite_database_path
+from app.services.sqlite_backup import BackupInfo, latest_sqlite_backup, list_sqlite_backups, sqlite_database_path
 from app.services.signal_results import LEVEL_ORDER, ResultCounter, summarize_results
 from app.database.models import (
     ImportBatch,
@@ -39,6 +39,7 @@ class MaintenanceSummary:
     sqlite_backup_enabled: bool
     sqlite_backup_interval_hours: int
     sqlite_backup_keep: int
+    backups: tuple[BackupInfo, ...] = ()
 
 @dataclass(frozen=True)
 class LatestImportSummary:
@@ -314,7 +315,8 @@ def directory_size_bytes(path: Path) -> int:
 
 def collect_maintenance_summary(settings: Any) -> MaintenanceSummary:
     database_path = sqlite_database_path(settings.database_url)
-    latest_backup = latest_sqlite_backup(settings.data_dir)
+    backups = tuple(list_sqlite_backups(settings.data_dir))
+    latest_backup = backups[0] if backups else latest_sqlite_backup(settings.data_dir)
     return MaintenanceSummary(
         database_path=str(database_path) if database_path is not None else None,
         database_size_bytes=database_path.stat().st_size if database_path is not None and database_path.exists() else 0,
@@ -326,6 +328,7 @@ def collect_maintenance_summary(settings: Any) -> MaintenanceSummary:
         sqlite_backup_enabled=bool(settings.sqlite_backup_enabled),
         sqlite_backup_interval_hours=int(settings.sqlite_backup_interval_hours),
         sqlite_backup_keep=int(settings.sqlite_backup_keep),
+        backups=backups,
     )
 
 
