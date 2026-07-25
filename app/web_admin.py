@@ -32,9 +32,13 @@ from app.services.bot_settings import (
     SUBSCRIPTION_PAYMENT_DETAILS_KEY,
     SUBSCRIPTION_SPECIALIST_CONTACT_KEY,
     PaymentConfig,
+    SystemRuntimeSettings,
+    apply_system_runtime_settings,
     get_analysis_payment_config,
     get_subscription_payment_config,
+    get_system_runtime_settings,
     set_bot_setting,
+    set_system_runtime_settings,
 )
 from app.services.subscriptions import SUBSCRIPTION_PLANS, format_price, get_subscription_plan
 from app.services.signal_results import AutoResultSummary, auto_update_signal_results, format_winrate, set_signal_result
@@ -220,6 +224,7 @@ LABELS = {
     "settings_update": "Изменение настроек",
     "maintenance_backup_create": "Создание backup",
     "maintenance_backup_check": "Проверка backup",
+    "system_settings_update": "Изменение системных настроек",
     "web_admin_create": "Создание web-админа",
     "web_admin_password_update": "Смена пароля web-админа",
     "web_admin_deactivate": "Отключение web-админа",
@@ -594,6 +599,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Настройки", "/settings"),
             ("Журнал", "/audit"),
             ("Админы", "/admins"),
+            ("Система", "/system"),
             ("Обслуживание", "/maintenance"),
             ("Инструкция", "/docs"),
         ]
@@ -1388,6 +1394,131 @@ def render_audit_csv(logs: list[WebAdminActionLog]) -> str:
     return output.getvalue()
 
 
+@dataclass(frozen=True)
+class SystemPageSummary:
+    runtime: SystemRuntimeSettings
+    database_url: str
+    database_path: str | None
+    data_dir: str
+    uploads_dir: str
+    timezone: str
+    max_upload_mb: int
+    scheduler_interval_seconds: int
+    signal_lead_minutes: int
+    sqlite_backup_env_enabled: bool
+    sqlite_backup_env_interval_hours: int
+    sqlite_backup_env_keep: int
+    bot_token_configured: bool
+    web_admin_users_configured: bool
+    web_admin_superusers: tuple[str, ...]
+    database_size_bytes: int
+    data_size_bytes: int
+    uploads_size_bytes: int
+
+
+def collect_system_page_summary(settings, runtime: SystemRuntimeSettings) -> SystemPageSummary:
+    effective = apply_system_runtime_settings(settings, runtime)
+    maintenance_summary = collect_maintenance_summary(effective)
+    return SystemPageSummary(
+        runtime=runtime,
+        database_url=settings.database_url,
+        database_path=maintenance_summary.database_path,
+        data_dir=str(settings.data_dir),
+        uploads_dir=str(settings.uploads_dir),
+        timezone=settings.timezone,
+        max_upload_mb=int(settings.max_upload_mb),
+        scheduler_interval_seconds=int(settings.scheduler_interval_seconds),
+        signal_lead_minutes=int(settings.signal_lead_minutes),
+        sqlite_backup_env_enabled=bool(settings.sqlite_backup_enabled),
+        sqlite_backup_env_interval_hours=int(settings.sqlite_backup_interval_hours),
+        sqlite_backup_env_keep=int(settings.sqlite_backup_keep),
+        bot_token_configured=bool(settings.bot_token),
+        web_admin_users_configured=bool(settings.web_admin_credentials),
+        web_admin_superusers=tuple(sorted(settings.web_admin_superusers)),
+        database_size_bytes=maintenance_summary.database_size_bytes,
+        data_size_bytes=maintenance_summary.data_size_bytes,
+        uploads_size_bytes=maintenance_summary.uploads_size_bytes,
+    )
+
+
+def _checked(value: bool) -> str:
+    return " checked" if value else ""
+
+
+def render_system_html(summary: SystemPageSummary, *, token: str = "", message: str = "") -> str:
+    message_html = f'<p class="pill"><b>{escape(message)}</b></p>' if message else ""
+    runtime = summary.runtime
+    superusers = ", ".join(summary.web_admin_superusers) or "-"
+    body = f"""
+    <section><h2>Система</h2>{message_html}
+      <p class="muted">Технические параметры доступны только super-admin. Секреты не показываются.</p>
+      <dl class="details">
+        <dt>Часовой пояс</dt><dd>{escape(summary.timezone)}</dd>
+        <dt>БД</dt><dd>{escape(summary.database_path or 'внешняя БД')}</dd>
+        <dt>Размер БД</dt><dd>{_fmt_bytes(summary.database_size_bytes)}</dd>
+        <dt>Папка data</dt><dd>{escape(summary.data_dir)} · {_fmt_bytes(summary.data_size_bytes)}</dd>
+        <dt>Папка uploads</dt><dd>{escape(summary.uploads_dir)} · {_fmt_bytes(summary.uploads_size_bytes)}</dd>
+        <dt>Лимит Excel</dt><dd>{summary.max_upload_mb} МБ</dd>
+        <dt>Отправка до матча</dt><dd>{summary.signal_lead_minutes} мин</dd>
+        <dt>Проверка очереди</dt><dd>{summary.scheduler_interval_seconds} сек</dd>
+        <dt>BOT_TOKEN</dt><dd>{'настроен' if summary.bot_token_configured else 'не настроен'}</dd>
+        <dt>WEB_ADMIN_USERS</dt><dd>{'настроен' if summary.web_admin_users_configured else 'не настроен'}</dd>
+        <dt>Super-admin .env</dt><dd>{escape(superusers)}</dd>
+      </dl>
+    </section>
+    <section><h2>Auto-backup SQLite</h2>
+      <form method="post" action="/system/backup" class="settings-form">
+        <label><input name="sqlite_backup_enabled" type="checkbox" value="1"{_checked(runtime.sqlite_backup_enabled)}> Включить авто-backup</label>
+        <label>Интервал, часов</label>
+        <input name="sqlite_backup_interval_hours" type="number" min="1" max="168" value="{runtime.sqlite_backup_interval_hours}">
+        <label>Хранить копий</label>
+        <input name="sqlite_backup_keep" type="number" min="1" max="60" value="{runtime.sqlite_backup_keep}">
+        <div class="actions"><button class="action-button" type="submit">Сохранить backup</button></div>
+      </form>
+      <p class="muted">Значения из .env: backup {'включен' if summary.sqlite_backup_env_enabled else 'выключен'}, интервал {summary.sqlite_backup_env_interval_hours} ч, хранить {summary.sqlite_backup_env_keep}. Значения выше применяются из БД без редактирования .env.</p>
+    </section>
+    <section><h2>Только просмотр</h2>
+      <p>Критичные параметры вроде <code>BOT_TOKEN</code>, <code>DATABASE_URL</code>, <code>WEB_ADMIN_USERS</code>, порта админки и путей хранения не редактируются из web-интерфейса.</p>
+    </section>
+    """
+    return _base_html("Система", body, token=token)
+
+
+async def update_web_system_backup_settings(
+    session,
+    *,
+    sqlite_backup_enabled: bool,
+    sqlite_backup_interval_hours: str,
+    sqlite_backup_keep: str,
+    actor_username: str,
+) -> SystemRuntimeSettings:
+    try:
+        interval = int(sqlite_backup_interval_hours)
+        keep = int(sqlite_backup_keep)
+    except ValueError as exc:
+        raise ValueError("Интервал и количество копий должны быть числами") from exc
+    runtime = await set_system_runtime_settings(
+        session,
+        sqlite_backup_enabled=sqlite_backup_enabled,
+        sqlite_backup_interval_hours=interval,
+        sqlite_backup_keep=keep,
+    )
+    await log_web_admin_action(
+        session,
+        actor_username=actor_username,
+        action="system_settings_update",
+        target_type="settings",
+        target_id="system_backup",
+        details={
+            "sqlite_backup_enabled": runtime.sqlite_backup_enabled,
+            "sqlite_backup_interval_hours": runtime.sqlite_backup_interval_hours,
+            "sqlite_backup_keep": runtime.sqlite_backup_keep,
+        },
+    )
+    await session.commit()
+    return runtime
+
+
 def render_settings_html(analysis_config: PaymentConfig, subscription_config: PaymentConfig, *, token: str = "", message: str = "") -> str:
     message_html = f'<p class="pill">{escape(message)}</p>' if message else ""
     body = f"""
@@ -1689,6 +1820,32 @@ async def monitoring(_: Annotated[None, Depends(require_web_admin)], request: Re
     async with SessionFactory() as session:
         summary = await collect_monitoring_summary(session)
     return HTMLResponse(render_monitoring_html(summary, token=""))
+
+
+@app.get("/system", response_class=HTMLResponse)
+async def system_page(_: Annotated[str, Depends(require_super_admin)], request: Request) -> HTMLResponse:
+    settings = get_settings()
+    async with SessionFactory() as session:
+        runtime = await get_system_runtime_settings(session, settings)
+    message = "Системные настройки сохранены." if request.query_params.get("saved") else ""
+    return HTMLResponse(render_system_html(collect_system_page_summary(settings, runtime), token="", message=message))
+
+
+@app.post("/system/backup")
+async def system_backup_update(request: Request, actor_username: Annotated[str, Depends(require_super_admin)]) -> RedirectResponse:
+    fields = await _read_form_fields(request)
+    try:
+        async with SessionFactory() as session:
+            await update_web_system_backup_settings(
+                session,
+                sqlite_backup_enabled=fields.get("sqlite_backup_enabled") == "1",
+                sqlite_backup_interval_hours=fields.get("sqlite_backup_interval_hours", ""),
+                sqlite_backup_keep=fields.get("sqlite_backup_keep", ""),
+                actor_username=actor_username,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return RedirectResponse(url="/system?saved=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/admins", response_class=HTMLResponse)
@@ -1995,13 +2152,19 @@ async def requests_export(_: Annotated[None, Depends(require_web_admin)], reques
 
 @app.get("/maintenance", response_class=HTMLResponse)
 async def maintenance(_: Annotated[None, Depends(require_super_admin)]) -> HTMLResponse:
-    summary = collect_maintenance_summary(get_settings())
+    base_settings = get_settings()
+    async with SessionFactory() as session:
+        runtime = await get_system_runtime_settings(session, base_settings)
+    summary = collect_maintenance_summary(apply_system_runtime_settings(base_settings, runtime))
     return HTMLResponse(render_maintenance_html(summary))
 
 
 @app.post("/maintenance/backup", response_class=HTMLResponse)
 async def maintenance_backup(actor_username: Annotated[str, Depends(require_super_admin)]) -> HTMLResponse:
-    settings = get_settings()
+    base_settings = get_settings()
+    async with SessionFactory() as session:
+        runtime = await get_system_runtime_settings(session, base_settings)
+    settings = apply_system_runtime_settings(base_settings, runtime)
     try:
         result = create_sqlite_backup(settings.database_url, settings.data_dir, keep=settings.sqlite_backup_keep)
     except (FileNotFoundError, ValueError) as exc:
@@ -2024,7 +2187,10 @@ async def maintenance_backup(actor_username: Annotated[str, Depends(require_supe
 
 @app.post("/maintenance/backup/check", response_class=HTMLResponse)
 async def maintenance_backup_check(actor_username: Annotated[str, Depends(require_super_admin)]) -> HTMLResponse:
-    settings = get_settings()
+    base_settings = get_settings()
+    async with SessionFactory() as session:
+        runtime = await get_system_runtime_settings(session, base_settings)
+    settings = apply_system_runtime_settings(base_settings, runtime)
     backups = list(summary_backup for summary_backup in collect_maintenance_summary(settings).backups)
     if not backups:
         summary = collect_maintenance_summary(settings)

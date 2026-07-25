@@ -10,8 +10,10 @@ from app.services.bot_settings import (
     SUBSCRIPTION_SPECIALIST_CONTACT_KEY,
     get_analysis_payment_config,
     get_subscription_payment_config,
+    get_system_runtime_settings,
     normalize_bot_setting_value,
     set_bot_setting,
+    set_system_runtime_settings,
 )
 
 
@@ -79,6 +81,32 @@ async def test_subscription_payment_config_uses_separate_saved_values() -> None:
         assert subscription_config.payment_details == "Подписка карта"
         assert subscription_config.specialist_contact == "@subspec"
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_system_runtime_settings_override_env_defaults() -> None:
+    engine, factory = await make_session()
+    settings = Settings(BOT_TOKEN="token", SQLITE_BACKUP_ENABLED=True, SQLITE_BACKUP_INTERVAL_HOURS=24, SQLITE_BACKUP_KEEP=10)
+    async with factory() as session:
+        initial = await get_system_runtime_settings(session, settings)
+        saved = await set_system_runtime_settings(
+            session,
+            sqlite_backup_enabled=False,
+            sqlite_backup_interval_hours=2,
+            sqlite_backup_keep=5,
+        )
+        await session.commit()
+        loaded = await get_system_runtime_settings(session, settings)
+
+    await engine.dispose()
+
+    assert initial.sqlite_backup_enabled is True
+    assert initial.sqlite_backup_interval_hours == 24
+    assert initial.sqlite_backup_keep == 10
+    assert saved.sqlite_backup_enabled is False
+    assert loaded.sqlite_backup_enabled is False
+    assert loaded.sqlite_backup_interval_hours == 2
+    assert loaded.sqlite_backup_keep == 5
 
 
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.sqlite_backup import BackupInfo, latest_sqlite_backup, list_sqlite_backups, sqlite_database_path, verify_sqlite_backup
 from app.services.signal_results import LEVEL_ORDER, ResultCounter, summarize_results
 from app.settings import get_settings
+from app.services.bot_settings import apply_system_runtime_settings, get_system_runtime_settings
 from app.database.models import (
     ImportBatch,
     Match,
@@ -557,6 +558,8 @@ def build_system_health_checks(
 
 async def collect_monitoring_summary(session: AsyncSession, *, limit: int = 10, settings: Any | None = None) -> MonitoringSummary:
     settings = settings or get_settings()
+    runtime = await get_system_runtime_settings(session, settings)
+    settings = apply_system_runtime_settings(settings, runtime)
     dashboard = await collect_dashboard_summary(session, recent_limit=limit)
     failed_deliveries = await collect_delivery_list(session, status_filter="failed", limit=limit)
     now = datetime.utcnow()

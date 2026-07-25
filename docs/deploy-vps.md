@@ -189,7 +189,7 @@ Open the web admin:
 http://217.114.5.208:48291/
 ```
 
-Use a database web-admin login/password, or one of the emergency `WEB_ADMIN_USERS` pairs from `/opt/algobet/.env`, when the browser asks for credentials. Only super-admins can open `Админы` and `Обслуживание`. Payment remains manual: users create requests, admins confirm payment and activate access in the admin panel.
+Use a database web-admin login/password, or one of the emergency `WEB_ADMIN_USERS` pairs from `/opt/algobet/.env`, when the browser asks for credentials. Only super-admins can open `Админы`, `Система`, and `Обслуживание`. Payment remains manual: users create requests, admins confirm payment and activate access in the admin panel.
 
 Useful checks:
 
@@ -198,6 +198,9 @@ docker compose ps
 docker compose logs -n 100 web
 docker compose restart web
 ```
+
+
+Runtime SQLite backup settings can be changed later from the `Система` page. These values are stored in the database and override the `.env` defaults without showing or editing secrets.
 
 ## External Web Admin With HTTPS
 

@@ -29,10 +29,11 @@ from app.services.dashboard import (
     UserDetail,
     UserListItem,
 )
-from app.services.bot_settings import PaymentConfig, get_analysis_payment_config, get_subscription_payment_config
+from app.services.bot_settings import PaymentConfig, SystemRuntimeSettings, get_analysis_payment_config, get_subscription_payment_config
 from app.services.sqlite_backup import BackupInfo, BackupVerification
 from app.services.signal_results import AutoResultSummary, ResultCounter
 from app.web_admin import (
+    SystemPageSummary,
     WebAdminActivityItem,
     authenticate_web_admin,
     collect_web_admin_activity,
@@ -56,6 +57,7 @@ from app.web_admin import (
     render_requests_html,
     render_settings_html,
     render_signal_detail_html,
+    render_system_html,
     render_subscriptions_csv,
     render_subscriptions_html,
     render_signals_csv,
@@ -65,6 +67,7 @@ from app.web_admin import (
     render_users_html,
     update_web_admin_password,
     update_web_payment_settings,
+    update_web_system_backup_settings,
     verify_env_web_admin_credentials,
     verify_web_admin_password,
     update_web_request_status,
@@ -688,6 +691,72 @@ async def test_log_web_admin_action_creates_log_row() -> None:
     assert log.target_type == "settings"
     assert log.target_id == "analysis"
     assert log.details == {"section": "analysis"}
+
+
+def test_render_system_html_shows_safe_settings_and_backup_form() -> None:
+    html = render_system_html(
+        SystemPageSummary(
+            runtime=SystemRuntimeSettings(sqlite_backup_enabled=True, sqlite_backup_interval_hours=6, sqlite_backup_keep=7),
+            database_url="sqlite+aiosqlite:///./data/algobet.db",
+            database_path="data/algobet.db",
+            data_dir="data",
+            uploads_dir="uploads",
+            timezone="Europe/Moscow",
+            max_upload_mb=25,
+            scheduler_interval_seconds=30,
+            signal_lead_minutes=20,
+            sqlite_backup_env_enabled=True,
+            sqlite_backup_env_interval_hours=24,
+            sqlite_backup_env_keep=10,
+            bot_token_configured=True,
+            web_admin_users_configured=True,
+            web_admin_superusers=("root",),
+            database_size_bytes=2048,
+            data_size_bytes=4096,
+            uploads_size_bytes=512,
+        ),
+        message="Сохранено",
+    )
+
+    assert "Система" in html
+    assert "Сохранено" in html
+    assert "Auto-backup SQLite" in html
+    assert 'action="/system/backup"' in html
+    assert 'name="sqlite_backup_interval_hours"' in html
+    assert 'value="6"' in html
+    assert "BOT_TOKEN" in html
+    assert "настроен" in html
+    assert "root" in html
+    assert "sqlite+aiosqlite:///./data/algobet.db" not in html
+    assert "/system" in html
+
+
+@pytest.mark.asyncio
+async def test_update_web_system_backup_settings_saves_values_and_logs() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        runtime = await update_web_system_backup_settings(
+            session,
+            sqlite_backup_enabled=False,
+            sqlite_backup_interval_hours="4",
+            sqlite_backup_keep="8",
+            actor_username="root",
+        )
+        log = await session.scalar(select(WebAdminActionLog).where(WebAdminActionLog.action == "system_settings_update"))
+
+    await engine.dispose()
+
+    assert runtime.sqlite_backup_enabled is False
+    assert runtime.sqlite_backup_interval_hours == 4
+    assert runtime.sqlite_backup_keep == 8
+    assert log is not None
+    assert log.actor_username == "root"
+    assert log.target_id == "system_backup"
+    assert log.details == {
+        "sqlite_backup_enabled": False,
+        "sqlite_backup_interval_hours": 4,
+        "sqlite_backup_keep": 8,
+    }
 
 
 def test_render_settings_html_shows_payment_forms() -> None:
