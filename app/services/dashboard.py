@@ -690,6 +690,7 @@ async def collect_signal_list(
     *,
     status_filter: str | None = None,
     result_filter: str | None = None,
+    schedule_filter: str | None = None,
     limit: int = 50,
 ) -> list[SignalListItem]:
     query = (
@@ -711,7 +712,7 @@ async def collect_signal_list(
 
     expected_lead = expected_signal_lead_minutes()
     now = datetime.utcnow()
-    return [
+    items = [
         build_signal_list_item(
             signal,
             match,
@@ -722,6 +723,44 @@ async def collect_signal_list(
         )
         for signal, match, result in rows
     ]
+    if schedule_filter == "problem":
+        return [item for item in items if item.schedule_warning]
+    return items
+
+
+async def collect_import_signal_schedule_warnings(
+    session: AsyncSession,
+    import_batch_id: int,
+    *,
+    limit: int = 10,
+    settings: Any | None = None,
+) -> list[SignalListItem]:
+    now = datetime.utcnow()
+    rows = (
+        await session.execute(
+            select(ScheduledSignal, Match, SignalResult)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.source_import_id == import_batch_id)
+            .where(ScheduledSignal.status.in_(["scheduled", "ready"]))
+            .order_by(ScheduledSignal.send_at.asc())
+        )
+    ).all()
+    signal_ids = [signal.id for signal, _, _ in rows]
+    delivery_counts = await _delivery_counts_by_signal(session, signal_ids)
+    expected_lead = expected_signal_lead_minutes(settings)
+    items = [
+        build_signal_list_item(
+            signal,
+            match,
+            result,
+            delivery_counts=delivery_counts,
+            expected_lead_minutes=expected_lead,
+            now=now,
+        )
+        for signal, match, result in rows
+    ]
+    return [item for item in items if item.schedule_warning][:limit]
 
 
 async def collect_upcoming_signal_list(

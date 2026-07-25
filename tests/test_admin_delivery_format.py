@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, SignalResult, User
-from app.handlers.admin import admin_settings_keyboard, directory_size_bytes, format_bytes, format_latest_import_text, format_sent_history_summary, format_signals_dashboard_text, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines, summarize_import_decision_logs
+from app.handlers.admin import admin_settings_keyboard, directory_size_bytes, format_bytes, format_latest_import_text, format_schedule_warning_lines, format_sent_history_summary, format_signals_dashboard_text, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines, summarize_import_decision_logs
 
 
 def make_match() -> Match:
@@ -185,6 +185,22 @@ async def test_get_signal_group_counts_summarizes_payload_groups(monkeypatch) ->
 
     assert counts == {"vip": 1, "all": 1, "unknown": 1}
     await engine.dispose()
+
+
+def test_format_schedule_warning_lines_shows_signal_timing() -> None:
+    lines = format_schedule_warning_lines([
+        SimpleNamespace(
+            id=12,
+            send_at=datetime(2026, 7, 24, 9, 40),
+            match_start_at=datetime(2026, 7, 24, 10, 0),
+            lead_minutes=20,
+            player_1="Player One",
+            player_2="Player Two",
+            schedule_warning="ожидалось 30 мин",
+        )
+    ])
+
+    assert lines == ["#12: 24.07.2026 12:40 → матч 24.07.2026 13:00 (20 мин), Player One - Player Two: ожидалось 30 мин"]
 
 
 def test_remove_uploaded_file_deletes_file_and_ignores_missing(tmp_path) -> None:

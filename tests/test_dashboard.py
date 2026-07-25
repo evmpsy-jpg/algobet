@@ -19,7 +19,7 @@ from app.database.models import (
     UserAccess,
     WebAdminActionLog,
 )
-from app.services.dashboard import DashboardSummary, ImportListItem, build_system_health_checks, collect_dashboard_summary, collect_delivery_list, collect_maintenance_summary, collect_monitoring_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
+from app.services.dashboard import DashboardSummary, ImportListItem, build_system_health_checks, collect_dashboard_summary, collect_delivery_list, collect_import_signal_schedule_warnings, collect_maintenance_summary, collect_monitoring_summary, collect_quality_summary, collect_request_detail, collect_request_list, collect_signal_detail, collect_signal_list, collect_user_detail, collect_user_list
 
 
 @pytest.mark.asyncio
@@ -234,6 +234,79 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
     assert [item.file_name for item in monitoring.recent_imports] == ["sample.xlsx"]
     assert len(monitoring.recent_admin_actions) == 1
     assert monitoring.recent_admin_actions[0].actor_username == "admin"
+
+
+@pytest.mark.asyncio
+async def test_schedule_problem_filter_and_import_warnings() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        batch = ImportBatch(
+            file_name="schedule.xlsx",
+            stored_path="uploads/schedule.xlsx",
+            file_sha256="abc",
+            uploaded_by_telegram_id=315715137,
+            status="completed",
+        )
+        session.add(batch)
+        await session.flush()
+        ok_match = Match(
+            external_match_id=801,
+            external_tournament_id=9001,
+            source_url="https://example.test/801",
+            tournament_date="24.07.2026",
+            match_time="12:30",
+            match_start_at=datetime(2030, 7, 24, 12, 30),
+            player_1="OK Player",
+            player_2="OK Opponent",
+            raw_data={},
+            is_present_in_latest_import=True,
+        )
+        bad_match = Match(
+            external_match_id=802,
+            external_tournament_id=9001,
+            source_url="https://example.test/802",
+            tournament_date="24.07.2026",
+            match_time="13:00",
+            match_start_at=datetime(2030, 7, 24, 13, 0),
+            player_1="Bad Player",
+            player_2="Bad Opponent",
+            raw_data={},
+            is_present_in_latest_import=True,
+        )
+        session.add_all([ok_match, bad_match])
+        await session.flush()
+        session.add_all([
+            ScheduledSignal(
+                match_id=ok_match.id,
+                status="scheduled",
+                send_at=datetime(2030, 7, 24, 12, 10),
+                signal_payload={"signal_group": "vip"},
+                source_import_id=batch.id,
+            ),
+            ScheduledSignal(
+                match_id=bad_match.id,
+                status="scheduled",
+                send_at=datetime(2030, 7, 24, 12, 0),
+                signal_payload={"signal_group": "all"},
+                source_import_id=batch.id,
+            ),
+        ])
+        await session.commit()
+
+        all_signals = await collect_signal_list(session)
+        problem_signals = await collect_signal_list(session, schedule_filter="problem")
+        import_warnings = await collect_import_signal_schedule_warnings(session, batch.id)
+
+    await engine.dispose()
+
+    assert len(all_signals) == 2
+    assert [item.player_1 for item in problem_signals] == ["Bad Player"]
+    assert problem_signals[0].schedule_warning == "ожидалось 20 мин"
+    assert [item.player_1 for item in import_warnings] == ["Bad Player"]
 
 
 @pytest.mark.asyncio

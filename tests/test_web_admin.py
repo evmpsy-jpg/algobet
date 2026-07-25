@@ -158,9 +158,37 @@ def test_render_signals_html_shows_filters_and_delivery_counts() -> None:
     assert "/signals?status=sent&result=lost" in html
     assert "/signals?status=sent&result=unrated" in html
     assert "/signals/export.csv?status=sent&result=won" in html
+    assert "/signals?status=sent&result=won&schedule=problem" in html
+    assert "Все расписание" in html
     assert "Player &lt;One&gt;" in html
     assert "5 / 1" in html
     assert "/signals/11" in html
+
+
+def test_render_signals_html_shows_schedule_problem_filter() -> None:
+    signal = make_signal()
+    problem = SignalListItem(
+        id=12,
+        status="scheduled",
+        send_at=datetime(2026, 7, 24, 12, 0),
+        signal_group="all",
+        level="STANDARD",
+        side=2,
+        player_1="Problem Player",
+        player_2="Opponent",
+        result_status=None,
+        match_start_at=datetime(2026, 7, 24, 13, 0),
+        lead_minutes=60,
+        schedule_warning="ожидалось 20 мин",
+    )
+
+    html = render_signals_html([signal, problem], token="secret", status_filter="scheduled", schedule_filter="problem")
+
+    assert "Только проблемы" in html
+    assert "/signals?status=scheduled" in html
+    assert "/signals/export.csv?status=scheduled&schedule=problem" in html
+    assert "Problem Player" in html
+    assert "ожидалось 20 мин" in html
 
 
 def test_render_signals_csv_exports_rows() -> None:

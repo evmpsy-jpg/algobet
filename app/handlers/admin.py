@@ -27,6 +27,7 @@ from app.services.bot_settings import (
     get_subscription_payment_config,
     set_bot_setting,
 )
+from app.services.dashboard import SignalListItem, collect_import_signal_schedule_warnings
 from app.services.decision_log import record_decision_log
 from app.services.excel_parser import ParsedMatch
 from app.services.import_service import import_tournaments, to_utc_naive
@@ -273,6 +274,17 @@ def format_import_warnings(warnings: list[str], *, limit: int = 5) -> str:
     preview = "\n".join(f"- {item}" for item in warnings[:limit])
     suffix = f"\n- \u0438 \u0435\u0449\u0451 {len(warnings) - limit}" if len(warnings) > limit else ""
     return f"\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f ({len(warnings)}):\n{preview}{suffix}"
+
+
+def format_schedule_warning_lines(items: list[SignalListItem]) -> list[str]:
+    lines: list[str] = []
+    for item in items:
+        lead = item.lead_minutes if item.lead_minutes is not None else "-"
+        lines.append(
+            f"#{item.id}: {_fmt_dt(item.send_at)} → матч {_fmt_dt(item.match_start_at)} "
+            f"({lead} мин), {item.player_1} - {item.player_2}: {item.schedule_warning}"
+        )
+    return lines
 
 
 def format_latest_import_text(
@@ -645,6 +657,7 @@ async def receive_upload(message: Message, state: FSMContext) -> None:
     try:
         async with SessionFactory() as session:
             summary = await import_tournaments(session, destination, safe_name, message.from_user.id)
+            schedule_warning_items = await collect_import_signal_schedule_warnings(session, summary.batch_id, settings=settings)
     except Exception as exc:
         await notify_admins(
             message.bot,
@@ -674,11 +687,17 @@ async def receive_upload(message: Message, state: FSMContext) -> None:
     warning_text = format_import_warnings(summary.warnings)
     if warning_text:
         lines.extend(["", warning_text])
+    schedule_warning_lines = format_schedule_warning_lines(schedule_warning_items)
+    if schedule_warning_lines:
+        lines.extend(["", "⚠️ Проблемы расписания сигналов:"])
+        lines.extend(f"• {item}" for item in schedule_warning_lines[:5])
+        if len(schedule_warning_lines) > 5:
+            lines.append(f"• …и ещё {len(schedule_warning_lines) - 5}")
     result_text = "\n".join(lines)
     await notify_admins(
         message.bot,
         settings.admin_ids,
-        format_import_success_admin_text(summary, safe_name, message.from_user.id),
+        format_import_success_admin_text(summary, safe_name, message.from_user.id, schedule_warning_lines),
         exclude_ids=[message.from_user.id],
     )
     await message.answer(result_text, reply_markup=admin_menu())

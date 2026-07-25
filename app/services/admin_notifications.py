@@ -30,9 +30,10 @@ async def notify_admins(
     return delivered
 
 
-def format_import_success_admin_text(summary, file_name: str, uploaded_by: int) -> str:
+def format_import_success_admin_text(summary, file_name: str, uploaded_by: int, schedule_warnings: list[str] | None = None) -> str:
     groups = getattr(summary, "scheduled_by_group", {}) or {}
     warnings = getattr(summary, "warnings", []) or []
+    schedule_warnings = schedule_warnings or []
     lines = [
         "✅ Excel загружен",
         "",
@@ -46,6 +47,12 @@ def format_import_success_admin_text(summary, file_name: str, uploaded_by: int) 
     ]
     if warnings:
         lines.append(f"Предупреждений: {len(warnings)}")
+    if schedule_warnings:
+        lines.append("")
+        lines.append(f"⚠️ Проблемы расписания: {len(schedule_warnings)}")
+        lines.extend(f"• {item}" for item in schedule_warnings[:5])
+        if len(schedule_warnings) > 5:
+            lines.append(f"• ещё {len(schedule_warnings) - 5}")
     lines.append("Проверьте детали в web-админке: Мониторинг или Сигналы.")
     return "\n".join(lines)[:3900]
 

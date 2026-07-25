@@ -56,12 +56,14 @@ def test_import_success_notification_text_contains_core_metrics() -> None:
         warnings=["row warning"],
     )
 
-    text = format_import_success_admin_text(summary, "ЛЕТО.xlsx", 315715137)
+    text = format_import_success_admin_text(summary, "ЛЕТО.xlsx", 315715137, ["#12: ожидалось 20 мин"])
 
     assert "Excel загружен" in text
     assert "ЛЕТО.xlsx" in text
     assert "Сигналов: 5 (VIP: 2, ALL: 3)" in text
     assert "Предупреждений: 1" in text
+    assert "Проблемы расписания: 1" in text
+    assert "#12: ожидалось 20 мин" in text
 
 
 def test_error_notification_texts_are_russian_and_actionable() -> None:

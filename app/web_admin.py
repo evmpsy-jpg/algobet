@@ -306,13 +306,25 @@ SIGNAL_RESULT_FILTER_LABELS = {
     "void": "Возврат",
 }
 
+SIGNAL_SCHEDULE_FILTER_LABELS = {
+    "problem": "Только проблемы",
+}
 
-def _signals_path(status_filter: str | None = None, result_filter: str | None = None, *, base: str = "/signals") -> str:
+
+def _signals_path(
+    status_filter: str | None = None,
+    result_filter: str | None = None,
+    schedule_filter: str | None = None,
+    *,
+    base: str = "/signals",
+) -> str:
     params = []
     if status_filter:
         params.append(f"status={status_filter}")
     if result_filter:
         params.append(f"result={result_filter}")
+    if schedule_filter:
+        params.append(f"schedule={schedule_filter}")
     return base + ("?" + "&".join(params) if params else "")
 
 
@@ -785,9 +797,10 @@ def render_signals_html(
     token: str = "",
     status_filter: str | None = None,
     result_filter: str | None = None,
+    schedule_filter: str | None = None,
 ) -> str:
     status_filters = "".join(
-        f'<a class="button" href="{_token_href(_signals_path(status, result_filter), token)}">{label}</a>'
+        f'<a class="button" href="{_token_href(_signals_path(status, result_filter, schedule_filter), token)}">{label}</a>'
         for label, status in [
             ("Все", None),
             ("Запланировано", "scheduled"),
@@ -797,7 +810,7 @@ def render_signals_html(
         ]
     )
     result_filters = "".join(
-        f'<a class="button" href="{_token_href(_signals_path(status_filter, result), token)}">{label}</a>'
+        f'<a class="button" href="{_token_href(_signals_path(status_filter, result, schedule_filter), token)}">{label}</a>'
         for label, result in [
             ("Все результаты", None),
             ("Без результата", "unrated"),
@@ -806,12 +819,18 @@ def render_signals_html(
             ("Возврат", "void"),
         ]
     )
+    schedule_filters = "".join(
+        f'<a class="button" href="{_token_href(_signals_path(status_filter, result_filter, schedule), token)}">{label}</a>'
+        for label, schedule in [("Все расписание", None), ("Только проблемы", "problem")]
+    )
     result_title = SIGNAL_RESULT_FILTER_LABELS.get(result_filter or "", "Все результаты")
+    schedule_title = SIGNAL_SCHEDULE_FILTER_LABELS.get(schedule_filter or "", "Все расписание")
     body = f"""
     <section>
-      <h2>Сигналы: {escape(_label(status_filter or 'all'))} · {escape(result_title)}</h2>
+      <h2>Сигналы: {escape(_label(status_filter or 'all'))} · {escape(result_title)} · {escape(schedule_title)}</h2>
       <div class="filters">{status_filters}</div>
-      <div class="filters">{result_filters}<a class="button" href="{_token_href(_signals_path(status_filter, result_filter, base='/signals/export.csv'), token)}">CSV</a></div>
+      <div class="filters">{result_filters}</div>
+      <div class="filters">{schedule_filters}<a class="button" href="{_token_href(_signals_path(status_filter, result_filter, schedule_filter, base='/signals/export.csv'), token)}">CSV</a></div>
       <table><thead><tr><th>ID</th><th>Статус</th><th>Отправка</th><th>Матч</th><th>За сколько</th><th>Контроль</th><th>Группа</th><th class="optional">Уровень</th><th>Сторона</th><th>Игра</th><th>Результат</th><th class="optional">Доставлено / ошибок</th></tr></thead><tbody>{_signal_rows(signals, token=token)}</tbody></table>
     </section>
     """
@@ -2005,21 +2024,27 @@ async def dashboard(_: Annotated[None, Depends(require_web_admin)], request: Req
 async def signals(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
     status_filter = request.query_params.get("status") or None
     result_filter = request.query_params.get("result") or None
+    schedule_filter = request.query_params.get("schedule") or None
     if result_filter not in SIGNAL_RESULT_FILTER_LABELS:
         result_filter = None
+    if schedule_filter not in SIGNAL_SCHEDULE_FILTER_LABELS:
+        schedule_filter = None
     async with SessionFactory() as session:
-        rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter)
-    return HTMLResponse(render_signals_html(rows, token="", status_filter=status_filter, result_filter=result_filter))
+        rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter, schedule_filter=schedule_filter)
+    return HTMLResponse(render_signals_html(rows, token="", status_filter=status_filter, result_filter=result_filter, schedule_filter=schedule_filter))
 
 
 @app.get("/signals/export.csv")
 async def signals_export(_: Annotated[None, Depends(require_web_admin)], request: Request) -> Response:
     status_filter = request.query_params.get("status") or None
     result_filter = request.query_params.get("result") or None
+    schedule_filter = request.query_params.get("schedule") or None
     if result_filter not in SIGNAL_RESULT_FILTER_LABELS:
         result_filter = None
+    if schedule_filter not in SIGNAL_SCHEDULE_FILTER_LABELS:
+        schedule_filter = None
     async with SessionFactory() as session:
-        rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter, limit=10000)
+        rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter, schedule_filter=schedule_filter, limit=10000)
     content = render_signals_csv(rows)
     return Response(
         content=content,
