@@ -711,7 +711,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .metric span {{ display:block; color:var(--muted); font-size:13px; margin-bottom:8px; }}
     .metric strong {{ font-size:30px; line-height:1; }}
     .sections {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:18px; }}
-    section {{ padding:16px; margin-bottom:18px; }}
+    section {{ padding:16px; margin-bottom:18px; overflow-x:auto; }}
     .pills {{ display:flex; flex-wrap:wrap; gap:8px; }}
     .pill {{ display:inline-flex; gap:7px; align-items:center; border:1px solid var(--line); border-radius:999px; padding:6px 10px; background:#fbfcfe; font-size:13px; }}
     .pill.danger {{ border-color:#fecaca; background:#fef2f2; color:#991b1b; }}
@@ -724,7 +724,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .health-problem .health-status {{ background:#fee2e2; color:#991b1b; }}
     .details {{ display:grid; grid-template-columns:140px 1fr; gap:8px 12px; margin:0; }}
     dt {{ color:var(--muted); }} dd {{ margin:0; }}
-    table {{ width:100%; border-collapse:collapse; font-size:14px; }}
+    table {{ width:100%; min-width:720px; border-collapse:collapse; font-size:14px; }}
     th, td {{ border-bottom:1px solid var(--line); padding:10px 8px; text-align:left; vertical-align:top; }}
     th {{ color:var(--muted); font-size:12px; text-transform:uppercase; }}
     .filters {{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }}
@@ -741,7 +741,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .doc-page code {{ padding:2px 5px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:4px; }}
     .doc-page a {{ color:var(--accent); font-weight:700; }}
     @media (max-width:900px) {{ .grid,.sections {{ grid-template-columns:1fr 1fr; }} }}
-    @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections,.health-list {{ grid-template-columns:1fr; }} table {{ font-size:13px; }} th.optional,td.optional {{ display:none; }} }}
+    @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections,.health-list {{ grid-template-columns:1fr; }} section {{ -webkit-overflow-scrolling:touch; }} table {{ font-size:13px; min-width:680px; }} th.optional,td.optional {{ display:none; }} }}
   </style>
 </head>
 <body>
@@ -1636,6 +1636,12 @@ class SystemPageSummary:
     data_size_bytes: int
     uploads_size_bytes: int
 
+def _csv_response(content: str, filename: str) -> Response:
+    return Response(
+        content=content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 def collect_system_page_summary(settings, runtime: SystemRuntimeSettings) -> SystemPageSummary:
     effective = apply_system_runtime_settings(settings, runtime)
@@ -2140,11 +2146,7 @@ async def audit_export(_: Annotated[str, Depends(require_web_admin)], request: R
             )
         ).all()
     content = render_audit_csv(list(logs))
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=algobet-audit.csv"},
-    )
+    return _csv_response(content, "algobet-audit.csv")
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -2216,11 +2218,7 @@ async def signals_export(_: Annotated[None, Depends(require_web_admin)], request
     async with SessionFactory() as session:
         rows = await collect_signal_list(session, status_filter=status_filter, result_filter=result_filter, schedule_filter=schedule_filter, limit=10000)
     content = render_signals_csv(rows)
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=algobet-signals.csv"},
-    )
+    return _csv_response(content, "algobet-signals.csv")
 
 
 def _import_query_filters(request: Request) -> tuple[str | None, str | None, str | None, int]:
@@ -2273,11 +2271,7 @@ async def import_signals_export(_: Annotated[None, Depends(require_web_admin)], 
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
     content = render_signals_csv(detail.signals)
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename=algobet-import-{import_id}-signals.csv"},
-    )
+    return _csv_response(content, f"algobet-import-{import_id}-signals.csv")
 
 
 def _delivery_query_filters(request: Request) -> tuple[str | None, str | None, int | None, int | None]:
@@ -2313,11 +2307,7 @@ async def deliveries_export(_: Annotated[None, Depends(require_web_admin)], requ
     async with SessionFactory() as session:
         rows = await collect_delivery_list(session, status_filter=status_filter, search=search, signal_id=signal_id, user_id=user_id, limit=10000)
     content = render_deliveries_csv(rows)
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=algobet-deliveries.csv"},
-    )
+    return _csv_response(content, "algobet-deliveries.csv")
 
 
 @app.post("/deliveries/{delivery_id}/retry")
@@ -2416,11 +2406,7 @@ async def subscriptions_export(_: Annotated[None, Depends(require_web_admin)], r
             limit=10000,
         )
     content = render_subscriptions_csv(rows)
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=algobet-subscriptions.csv"},
-    )
+    return _csv_response(content, "algobet-subscriptions.csv")
 
 @app.get("/requests", response_class=HTMLResponse)
 async def requests(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
@@ -2446,11 +2432,7 @@ async def requests_export(_: Annotated[None, Depends(require_web_admin)], reques
     async with SessionFactory() as session:
         rows = await collect_request_list(session, kind_filter=kind_filter, status_filter=status_filter, limit=10000)
     content = render_requests_csv(rows)
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=algobet-requests.csv"},
-    )
+    return _csv_response(content, "algobet-requests.csv")
 
 
 @app.get("/maintenance", response_class=HTMLResponse)

@@ -39,6 +39,7 @@ from app.web_admin import (
     SystemPageSummary,
     WebAdminActivityItem,
     authenticate_web_admin,
+    _csv_response,
     collect_web_admin_activity,
     create_or_update_web_admin_user,
     deactivate_web_admin_user,
@@ -151,6 +152,23 @@ def test_render_dashboard_html_shows_core_metrics_and_navigation() -> None:
     assert "/signals" in html
     assert "/users" in html
     assert "/requests" in html
+
+
+
+def test_csv_response_adds_utf8_bom_for_excel() -> None:
+    response = _csv_response("title\nВсё включено\n", "sample.csv")
+
+    assert response.body.startswith(b"\xef\xbb\xbf")
+    assert response.media_type == "text/csv; charset=utf-8"
+    assert response.headers["content-disposition"] == "attachment; filename=sample.csv"
+    assert response.body.decode("utf-8-sig").splitlines()[1] == "Всё включено"
+
+
+def test_admin_tables_scroll_inside_sections_on_mobile() -> None:
+    html = render_dashboard_html(DashboardSummary())
+
+    assert "overflow-x:auto" in html
+    assert "min-width:680px" in html
 
 
 def test_render_signals_html_shows_filters_and_delivery_counts() -> None:
