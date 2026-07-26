@@ -48,7 +48,21 @@ def first_sheet_title(sheet_id: str, token: str) -> str:
     return str(title)
 
 
-def _bounded_range(columns: str, max_rows: int | None) -> str:
+def last_non_empty_row(sheet_id: str, token: str, sheet_name: str, *, column: str = "B") -> int:
+    range_name = f"{_quote_sheet_name(sheet_name)}!{column}:{column}"
+    params = urllib.parse.urlencode({
+        "ranges": range_name,
+        "majorDimension": "ROWS",
+        "valueRenderOption": "FORMATTED_VALUE",
+        "fields": "valueRanges(values)",
+    })
+    url = f"{GOOGLE_SHEETS_API_BASE}/{urllib.parse.quote(sheet_id)}/values:batchGet?{params}"
+    payload = _request_json(url, token, timeout=45)
+    value_ranges = payload.get("valueRanges") or []
+    values = value_ranges[0].get("values") if value_ranges else []
+    return len(values or [])
+
+def _bounded_range(columns: str, max_rows: int | None, last_row: int | None = None) -> str:
     if max_rows is None or int(max_rows) <= 0 or ":" not in columns:
         return columns
     start, end = columns.split(":", 1)
@@ -63,7 +77,8 @@ def fetch_first_sheet_grid(
     max_rows: int = DEFAULT_MAX_ROWS,
 ) -> dict[str, Any]:
     title = first_sheet_title(sheet_id, token)
-    range_name = f"{_quote_sheet_name(title)}!{_bounded_range(columns, max_rows)}"
+    last_row = last_non_empty_row(sheet_id, token, title)
+    range_name = f"{_quote_sheet_name(title)}!{_bounded_range(columns, max_rows, last_row)}"
     params = urllib.parse.urlencode({
         "includeGridData": "true",
         "ranges": range_name,
