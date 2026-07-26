@@ -56,4 +56,5 @@ def test_parse_google_sheets_grid_reads_first_sheet_hyperlinks_and_values() -> N
 
 def test_bounded_range_limits_rows() -> None:
     assert _bounded_range("A:CT", 500) == "A1:CT500"
+    assert _bounded_range("A:CT", 500, 2000) == "A1501:CT2000"
     assert _bounded_range("A:CT", 0) == "A:CT"

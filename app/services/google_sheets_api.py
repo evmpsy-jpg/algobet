@@ -66,7 +66,11 @@ def _bounded_range(columns: str, max_rows: int | None, last_row: int | None = No
     if max_rows is None or int(max_rows) <= 0 or ":" not in columns:
         return columns
     start, end = columns.split(":", 1)
-    return f"{start}1:{end}{int(max_rows)}"
+    limit = int(max_rows)
+    if last_row is not None and int(last_row) > limit:
+        first_row = int(last_row) - limit + 1
+        return f"{start}{first_row}:{end}{int(last_row)}"
+    return f"{start}1:{end}{limit}"
 
 
 def fetch_first_sheet_grid(
