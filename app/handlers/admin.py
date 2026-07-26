@@ -2156,23 +2156,28 @@ def format_admin_settings_text(
     subscription_payment_details: str,
     subscription_specialist_contact: str,
 ) -> str:
-    signal = rules["signal"]
-    high = rules["high_confidence"]
+    signal = rules.get("signal", {})
+    levels = rules.get("levels", {})
+    top_probability = levels.get("top", {}).get("min_probability", "-")
+    strong_probability = levels.get("strong", {}).get("min_probability", "-")
     return (
         "⚙️ Настройки\n\n"
         f"Часовой пояс: {settings.timezone}\n"
-        f"Отправка до матча: {signal['lead_minutes']} минут\n"
-        f"Минимум H2H (CP): {signal['min_h2h_games']}\n"
-        f"Минимальная форма Q/X: {signal['min_favorite_form']}\n"
-        f"ЖБ-сигнал от: {high['min_probability']}%\n"
+        f"Отправка до матча: {signal.get('lead_minutes', '-')} минут\n"
+        f"Минимум H2H (CP): {signal.get('min_h2h_games', '-')}\n"
+        f"Минимальная форма Q/X: {signal.get('min_favorite_form', '-')}\n"
+        f"VIP от: {top_probability}%\n"
+        f"Все сигналы от: {strong_probability}%\n"
         f"Проверка очереди: каждые {settings.scheduler_interval_seconds} секунд\n"
         f"Максимальный Excel: {settings.max_upload_mb} МБ\n\n"
         "🔎 Анализ матча\n"
-        f"Реквизиты: {payment_details}\n"
-        f"Контакт специалиста: {specialist_contact}\n\n"
-        "Правила сигналов читаются из signal_rules.yaml. Реквизиты и контакт анализа можно менять кнопками ниже."
+        f"Реквизиты: {analysis_payment_details}\n"
+        f"Контакт специалиста: {analysis_specialist_contact}\n\n"
+        "💳 Подписки\n"
+        f"Реквизиты: {subscription_payment_details}\n"
+        f"Контакт специалиста: {subscription_specialist_contact}\n\n"
+        "Правила сигналов читаются из signal_rules.yaml. Реквизиты и контакты можно менять кнопками ниже."
     )
-
 
 async def show_admin_settings(target: Message | CallbackQuery) -> None:
     settings = get_settings()

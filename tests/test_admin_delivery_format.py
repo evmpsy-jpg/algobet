@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, SignalResult, User
-from app.handlers.admin import admin_settings_keyboard, directory_size_bytes, format_bytes, format_latest_import_text, format_schedule_warning_lines, format_sent_history_summary, format_signals_dashboard_text, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines, summarize_import_decision_logs
+from app.handlers.admin import admin_settings_keyboard, format_admin_settings_text, directory_size_bytes, format_bytes, format_latest_import_text, format_schedule_warning_lines, format_sent_history_summary, format_signals_dashboard_text, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines, summarize_import_decision_logs
 
 
 def make_match() -> Match:
@@ -308,3 +308,21 @@ def test_storage_usage_reports_external_database(tmp_path) -> None:
     lines = storage_usage_lines(settings)
 
     assert "SQLite: \u0432\u043d\u0435\u0448\u043d\u044f\u044f \u0411\u0414" in lines
+
+def test_format_admin_settings_text_uses_current_rule_levels() -> None:
+    text = format_admin_settings_text(
+        SimpleNamespace(timezone="Europe/Moscow", scheduler_interval_seconds=15, max_upload_mb=20),
+        {
+            "signal": {"lead_minutes": 20, "min_h2h_games": 5, "min_favorite_form": 7},
+            "levels": {"top": {"min_probability": 90}, "strong": {"min_probability": 85}},
+        },
+        "Карта анализа",
+        "@analysis",
+        "Карта подписки",
+        "@subscription",
+    )
+
+    assert "VIP от: 90%" in text
+    assert "Все сигналы от: 85%" in text
+    assert "Карта анализа" in text
+    assert "Карта подписки" in text
