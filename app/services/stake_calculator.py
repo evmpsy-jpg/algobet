@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -49,7 +49,7 @@ STAKE_PLANS = [
     StakePlan(Decimal("1.95"), Decimal("0.14"), Decimal("0.28"), Decimal("0.58")),
     StakePlan(Decimal("2.00"), Decimal("0.15"), Decimal("0.30"), Decimal("0.55")),
 ]
-STEP_OPTIONS = (2, 5, 10, 15, 20)
+STEP_OPTIONS = (2, 3, 5, 8, 10, 15, 20)
 SET_RATIOS = (Decimal("0.08"), Decimal("0.22"), Decimal("0.70"))
 TWOPLACES = Decimal("0.01")
 

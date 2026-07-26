@@ -63,7 +63,15 @@ def test_calculator_step_keyboard_contains_step_buttons() -> None:
     markup = calculator_step_keyboard()
 
     callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
-    assert callbacks == ["calc:step:2", "calc:step:5", "calc:step:10", "calc:step:15", "calc:step:20"]
+    assert callbacks == [
+        "calc:step:2",
+        "calc:step:3",
+        "calc:step:5",
+        "calc:step:8",
+        "calc:step:10",
+        "calc:step:15",
+        "calc:step:20",
+    ]
 
 
 def test_calculate_stakes_matches_excel_examples_for_bank_5500() -> None:
