@@ -9,6 +9,7 @@ from app.settings import get_settings
 from app.database.session import init_db
 from app.handlers import admin, user
 from app.services.backup_scheduler import sqlite_backup_loop
+from app.services.google_sheets_sync import google_sheets_sync_loop
 from app.services.signal_sender import signal_sender_loop
 
 
@@ -28,6 +29,7 @@ async def main() -> None:
     background_tasks = [
         asyncio.create_task(signal_sender_loop(bot)),
         asyncio.create_task(sqlite_backup_loop(bot)),
+        asyncio.create_task(google_sheets_sync_loop(bot)),
     ]
     try:
         await dispatcher.start_polling(bot)

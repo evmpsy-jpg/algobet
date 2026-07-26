@@ -65,29 +65,54 @@ def _parse_hyperlink_formula(formula: str) -> tuple[str, str] | None:
     return match.group("url"), match.group("label")
 
 
-def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> ParseResult:
-    # Первая книга нужна для HYPERLINK и исходных формул, вторая — для
-    # сохранённых Excel значений вычисляемых столбцов (EG, EH, CS, CT и т. д.).
-    formula_book = load_workbook(path, data_only=False, read_only=True)
-    values_book = load_workbook(path, data_only=True, read_only=True)
-    if "Турниры" not in formula_book.sheetnames:
-        formula_book.close()
-        values_book.close()
-        raise ValueError('В файле отсутствует обязательный лист "Турниры".')
+def _cell_hyperlink_target(cell: Any) -> str | None:
+    hyperlink = getattr(cell, "hyperlink", None)
+    target = getattr(hyperlink, "target", None)
+    return str(target).strip() if target else None
 
-    formula_sheet = formula_book["Турниры"]
-    values_sheet = values_book["Турниры"]
+
+def _extract_link_and_label(formula_cell: Any, value_cell: Any) -> tuple[str, str] | None:
+    formula_value = formula_cell.value
+    if isinstance(formula_value, str) and formula_value.upper().startswith("=HYPERLINK"):
+        parsed = _parse_hyperlink_formula(formula_value)
+        if parsed is not None:
+            return parsed
+    target = _cell_hyperlink_target(formula_cell)
+    if target:
+        label = value_cell.value if value_cell.value is not None else formula_value
+        return target, str(label or "").strip()
+    return None
+
+
+def _tournament_sheet_name(sheetnames: list[str]) -> str:
+    if "Турниры" in sheetnames:
+        return "Турниры"
+    if not sheetnames:
+        raise ValueError("В файле нет листов.")
+    return sheetnames[0]
+
+
+def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> ParseResult:
+    # Первая книга нужна для HYPERLINK и исходных формул, вторая - для
+    # сохранённых Excel значений вычисляемых столбцов (EG, EH, CS, CT и т. д.).
+    formula_book = load_workbook(path, data_only=False, read_only=False)
+    values_book = load_workbook(path, data_only=True, read_only=True)
+    sheet_name = _tournament_sheet_name(formula_book.sheetnames)
+
+    formula_sheet = formula_book[sheet_name]
+    values_sheet = values_book[sheet_name]
     current_date: str | None = None
     current_headers: list[str] = []
     current_tournament_name = "Турнир"
     parsed: list[ParsedMatch] = []
     warnings: list[str] = []
+    if sheet_name != "Турниры":
+        warnings.append(f"Лист 'Турниры' не найден, использован первый лист: {sheet_name}.")
     tz = ZoneInfo(timezone)
 
     formula_rows = formula_sheet.iter_rows()
     values_rows = values_sheet.iter_rows()
     for row_number, (formula_row, values_row) in enumerate(zip(formula_rows, values_rows), start=1):
-        first_formula = formula_row[0].value if formula_row else None
         first_value = values_row[0].value if values_row else None
         date_match = DATE_RE.search(str(first_value)) if first_value else None
         if date_match:
@@ -99,22 +124,16 @@ def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> Parse
             continue
 
         # Первая строка турнира содержит HYPERLINK в A и название лиги.
-        if isinstance(first_formula, str) and first_formula.upper().startswith("=HYPERLINK"):
-            tournament_link = _parse_hyperlink_formula(first_formula)
-            if tournament_link is not None:
-                current_tournament_name = tournament_link[1].strip()
+        tournament_link = _extract_link_and_label(formula_row[0], values_row[0]) if formula_row else None
+        if tournament_link is not None:
+            current_tournament_name = tournament_link[1].strip()
 
         if not current_date or len(formula_row) < 3:
             continue
 
         time_value = values_row[1].value
-        formula = formula_row[2].value
-        if not time_value or not isinstance(formula, str) or not formula.upper().startswith("=HYPERLINK"):
-            continue
-
-        hyperlink = _parse_hyperlink_formula(formula)
-        if hyperlink is None:
-            warnings.append(f"Строка {row_number}: не удалось разобрать HYPERLINK.")
+        hyperlink = _extract_link_and_label(formula_row[2], values_row[2])
+        if not time_value or hyperlink is None:
             continue
         source_url, label = hyperlink
 
@@ -140,7 +159,7 @@ def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> Parse
             header = current_headers[index] if index < len(current_headers) else f"COL_{index + 1}"
             value = value_cell.value
             formula_value = formula_cell.value
-            # Буква столбца — основной стабильный ключ для правил.
+            # Буква столбца - основной стабильный ключ для правил.
             raw_data[column] = _json_safe(value)
             raw_data[f"{header}__{index + 1}"] = _json_safe(value)
             if isinstance(formula_value, str) and formula_value.startswith("="):
