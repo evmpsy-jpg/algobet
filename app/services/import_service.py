@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.settings import get_settings
 from app.database.models import ImportBatch, Match, MatchSnapshot, ScheduledSignal
 from app.services.decision_log import record_decision_log
-from app.services.excel_parser import ParsedMatch, parse_tournaments_file
+from app.services.excel_parser import ParseResult, parse_tournaments_file
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.match_normalizer import normalize_match
 from app.services.rules_config import get_signal_rules
@@ -48,19 +48,23 @@ def calculate_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-async def import_tournaments(
+def calculate_text_sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+async def import_parse_result(
     session: AsyncSession,
-    file_path: Path,
+    result: ParseResult,
+    *,
     original_name: str,
+    stored_path: str,
+    file_hash: str,
     uploaded_by: int,
 ) -> ImportSummary:
     settings = get_settings()
-    file_hash = calculate_sha256(file_path)
-    result = parse_tournaments_file(file_path, settings.timezone)
-
     batch = ImportBatch(
         file_name=original_name,
-        stored_path=str(file_path),
+        stored_path=stored_path,
         file_sha256=file_hash,
         uploaded_by_telegram_id=uploaded_by,
         status="processing",
@@ -70,7 +74,6 @@ async def import_tournaments(
     session.add(batch)
     await session.flush()
 
-    fresh_ids = {item.external_match_id for item in result.matches}
     inserted = 0
     updated_count = 0
     scheduled = 0
@@ -185,14 +188,14 @@ async def import_tournaments(
             signal.recalculated_at = datetime.utcnow()
             scheduled += 1
         elif signal is not None and signal.status != "sent":
-            rejection_reasons[decision.reason or "\u041c\u0430\u0442\u0447 \u043d\u0435 \u0441\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u0435\u0442 \u0443\u0441\u043b\u043e\u0432\u0438\u044f\u043c"] += 1
+            rejection_reasons[decision.reason or "Матч не соответствует условиям"] += 1
             signal.status = "cancelled"
             signal.cancel_reason = decision.reason or "Матч не соответствует условиям"
             signal.source_import_id = batch.id
             signal.recalculated_at = datetime.utcnow()
             cancelled += 1
         elif not decision.suitable:
-            rejection_reasons[decision.reason or "\u041c\u0430\u0442\u0447 \u043d\u0435 \u0441\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0443\u0435\u0442 \u0443\u0441\u043b\u043e\u0432\u0438\u044f\u043c"] += 1
+            rejection_reasons[decision.reason or "Матч не соответствует условиям"] += 1
 
     missing_query = select(Match).where(Match.is_present_in_latest_import.is_(False))
     missing_matches = list((await session.scalars(missing_query)).all())
@@ -227,4 +230,23 @@ async def import_tournaments(
         scheduled_by_group=dict(scheduled_by_group),
         rejection_reasons=dict(rejection_reasons),
         warnings=result.warnings,
+    )
+
+
+async def import_tournaments(
+    session: AsyncSession,
+    file_path: Path,
+    original_name: str,
+    uploaded_by: int,
+) -> ImportSummary:
+    settings = get_settings()
+    file_hash = calculate_sha256(file_path)
+    result = parse_tournaments_file(file_path, settings.timezone)
+    return await import_parse_result(
+        session,
+        result,
+        original_name=original_name,
+        stored_path=str(file_path),
+        file_hash=file_hash,
+        uploaded_by=uploaded_by,
     )

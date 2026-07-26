@@ -1,24 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
 from app.database.session import SessionFactory
 from app.services.admin_notifications import format_import_error_admin_text, format_import_success_admin_text, notify_admins
 from app.services.bot_settings import get_bot_setting, set_bot_setting
-from app.services.import_service import ImportSummary, calculate_sha256, import_tournaments
+from app.services.google_sheets_api import parse_google_sheet
+from app.services.import_service import ImportSummary, calculate_text_sha256, import_parse_result
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 GOOGLE_SHEETS_LAST_SHA_KEY = "google_sheets.last_sha256"
 GOOGLE_SHEETS_UPLOADED_BY = 0
-GOOGLE_SHEETS_EXPORT_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
+SYNC_LOCK = asyncio.Lock()
 
 
 class GoogleSyncBot(Protocol):
@@ -34,18 +35,6 @@ class GoogleSheetsSyncResult:
     message: str = ""
 
 
-def google_sheet_export_url(sheet_id: str) -> str:
-    cleaned = sheet_id.strip()
-    if not cleaned:
-        raise ValueError("Google Sheet ID не указан.")
-    return f"https://docs.google.com/spreadsheets/d/{cleaned}/export?format=xlsx"
-
-
-def google_sheet_download_path(uploads_dir: Path, now: datetime | None = None) -> Path:
-    now = now or datetime.utcnow()
-    return uploads_dir / f"google-sheets-{now:%Y%m%d-%H%M%S}.xlsx"
-
-
 def google_service_account_token(service_account_file: str) -> str:
     path = Path(service_account_file).expanduser()
     if not path.exists():
@@ -56,7 +45,7 @@ def google_service_account_token(service_account_file: str) -> str:
 
     credentials = service_account.Credentials.from_service_account_file(
         str(path),
-        scopes=[GOOGLE_SHEETS_EXPORT_SCOPE],
+        scopes=[GOOGLE_SHEETS_SCOPE],
     )
     credentials.refresh(Request())
     if not credentials.token:
@@ -64,74 +53,90 @@ def google_service_account_token(service_account_file: str) -> str:
     return credentials.token
 
 
-def download_google_sheet_xlsx(sheet_id: str, destination: Path, service_account_file: str = "") -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    headers = {"User-Agent": "AlgobetBot/1.0"}
-    if service_account_file.strip():
-        headers["Authorization"] = f"Bearer {google_service_account_token(service_account_file)}"
-    request = urllib.request.Request(
-        google_sheet_export_url(sheet_id),
-        headers=headers,
-    )
-    with urllib.request.urlopen(request, timeout=240) as response:
-        data = response.read()
-    if not data.startswith(b"PK"):
-        raise ValueError("Google Sheets не отдал XLSX. Проверьте доступ сервисного аккаунта к таблице.")
-    destination.write_bytes(data)
+def parse_google_sheet_with_service_account(sheet_id: str, service_account_file: str, timezone: str):
+    token = google_service_account_token(service_account_file)
+    return parse_google_sheet(sheet_id, token, timezone)
 
 
-def remove_temp_file(path: Path) -> None:
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        logger.warning("Не удалось удалить временный файл Google Sheets %s: %s", path, exc)
+def parse_result_hash(result) -> str:
+    payload = {
+        "sheet_name": result.sheet_name,
+        "total_rows": result.total_rows,
+        "matches": [
+            {
+                "external_match_id": match.external_match_id,
+                "external_tournament_id": match.external_tournament_id,
+                "source_url": match.source_url,
+                "date": match.tournament_date,
+                "time": match.match_time,
+                "player_1": match.player_1,
+                "player_2": match.player_2,
+                "score": match.score,
+                "raw_data": match.raw_data,
+            }
+            for match in result.matches
+        ],
+        "warnings": result.warnings,
+    }
+    return calculate_text_sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
 
 
 async def sync_google_sheet_once(bot: GoogleSyncBot | None = None) -> GoogleSheetsSyncResult:
     settings = get_settings()
     if not settings.google_sheet_id.strip():
         return GoogleSheetsSyncResult(status="disabled", message="Google Sheet ID не указан.")
-
-    destination = google_sheet_download_path(settings.uploads_dir)
     service_account_file = str(getattr(settings, "google_service_account_file", "") or "")
-    try:
-        await asyncio.to_thread(download_google_sheet_xlsx, settings.google_sheet_id, destination, service_account_file)
-        file_hash = calculate_sha256(destination)
-        async with SessionFactory() as session:
-            previous_hash = await get_bot_setting(session, GOOGLE_SHEETS_LAST_SHA_KEY, "")
-            if previous_hash == file_hash:
-                return GoogleSheetsSyncResult(status="skipped", file_hash=file_hash, message="Изменений нет.")
+    if not service_account_file.strip():
+        return GoogleSheetsSyncResult(status="disabled", message="Файл сервисного аккаунта не указан.")
+    if SYNC_LOCK.locked():
+        return GoogleSheetsSyncResult(status="skipped", message="Синхронизация уже выполняется.")
 
-            summary = await import_tournaments(
-                session,
-                destination,
-                "Google Sheets.xlsx",
-                uploaded_by=GOOGLE_SHEETS_UPLOADED_BY,
+    async with SYNC_LOCK:
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    parse_google_sheet_with_service_account,
+                    settings.google_sheet_id,
+                    service_account_file,
+                    settings.timezone,
+                ),
+                timeout=90,
             )
-            await set_bot_setting(session, GOOGLE_SHEETS_LAST_SHA_KEY, file_hash, max_length=64)
-            await session.commit()
-    except Exception as exc:
-        logger.exception("Ошибка синхронизации Google Sheets")
-        if bot is not None:
-            await notify_admins(
-                bot,
-                settings.admin_ids,
-                format_import_error_admin_text("Google Sheets.xlsx", GOOGLE_SHEETS_UPLOADED_BY, exc),
-            )
-        return GoogleSheetsSyncResult(status="error", message=str(exc))
-    finally:
-        remove_temp_file(destination)
+            file_hash = parse_result_hash(result)
+            async with SessionFactory() as session:
+                previous_hash = await get_bot_setting(session, GOOGLE_SHEETS_LAST_SHA_KEY, "")
+                if previous_hash == file_hash:
+                    return GoogleSheetsSyncResult(status="skipped", file_hash=file_hash, message="Изменений нет.")
+
+                summary = await import_parse_result(
+                    session,
+                    result,
+                    original_name="Google Sheets API",
+                    stored_path=f"google-sheets://{settings.google_sheet_id}/{result.sheet_name}",
+                    file_hash=file_hash,
+                    uploaded_by=GOOGLE_SHEETS_UPLOADED_BY,
+                )
+                await set_bot_setting(session, GOOGLE_SHEETS_LAST_SHA_KEY, file_hash, max_length=64)
+                await session.commit()
+        except Exception as exc:
+            logger.exception("Ошибка синхронизации Google Sheets")
+            if bot is not None:
+                await notify_admins(
+                    bot,
+                    settings.admin_ids,
+                    format_import_error_admin_text("Google Sheets API", GOOGLE_SHEETS_UPLOADED_BY, exc),
+                )
+            return GoogleSheetsSyncResult(status="error", message=str(exc))
 
     if bot is not None:
         await notify_admins(
             bot,
             settings.admin_ids,
-            format_import_success_admin_text(summary, "Google Sheets.xlsx", GOOGLE_SHEETS_UPLOADED_BY),
+            format_import_success_admin_text(summary, "Google Sheets API", GOOGLE_SHEETS_UPLOADED_BY),
         )
     logger.info(
-        "Google Sheets imported: rows=%s matches=%s signals=%s",
+        "Google Sheets API imported: sheet=%s rows=%s matches=%s signals=%s",
+        result.sheet_name,
         summary.total_rows,
         summary.parsed_matches,
         summary.scheduled_signals,
@@ -149,8 +154,7 @@ async def google_sheets_sync_loop(bot: GoogleSyncBot) -> None:
         return
 
     interval_seconds = max(1, int(settings.google_sheets_sync_interval_minutes)) * 60
-    auth_mode = "service_account" if getattr(settings, "google_service_account_file", "") else "public_link"
-    logger.info("Google Sheets sync enabled: every %s seconds, auth=%s", interval_seconds, auth_mode)
+    logger.info("Google Sheets sync enabled: every %s seconds, mode=sheets_api", interval_seconds)
     while True:
         await sync_google_sheet_once(bot)
         await asyncio.sleep(interval_seconds)
