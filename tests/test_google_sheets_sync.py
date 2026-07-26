@@ -70,7 +70,7 @@ async def test_sync_google_sheet_once_skips_unchanged_hash(monkeypatch: pytest.M
         lambda: SimpleNamespace(google_sheet_id="sheet", uploads_dir=tmp_path, admin_ids=[]),
     )
     monkeypatch.setattr("app.services.google_sheets_sync.google_sheet_download_path", lambda uploads_dir: destination)
-    monkeypatch.setattr("app.services.google_sheets_sync.download_google_sheet_xlsx", lambda sheet_id, path: None)
+    monkeypatch.setattr("app.services.google_sheets_sync.download_google_sheet_xlsx", lambda sheet_id, path, service_account_file="": None)
     monkeypatch.setattr("app.services.google_sheets_sync.calculate_sha256", lambda path: "same-sha")
     monkeypatch.setattr("app.services.google_sheets_sync.SessionFactory", lambda: FakeSession())
     monkeypatch.setattr("app.services.google_sheets_sync.get_bot_setting", fake_get_bot_setting)
@@ -79,3 +79,30 @@ async def test_sync_google_sheet_once_skips_unchanged_hash(monkeypatch: pytest.M
 
     assert result == GoogleSheetsSyncResult(status="skipped", file_hash="same-sha", message="Изменений нет.")
     assert not destination.exists()
+
+def test_download_google_sheet_xlsx_uses_service_account_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def read(self) -> bytes:
+            return b"PK xlsx"
+
+    def fake_urlopen(request, timeout: int):
+        captured["authorization"] = request.headers.get("Authorization")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("app.services.google_sheets_sync.google_service_account_token", lambda path: "token-123")
+    monkeypatch.setattr("app.services.google_sheets_sync.urllib.request.urlopen", fake_urlopen)
+
+    destination = tmp_path / "sheet.xlsx"
+    download_google_sheet_xlsx("sheet-id", destination, "service.json")
+
+    assert captured == {"authorization": "Bearer token-123", "timeout": 60}
+    assert destination.read_bytes() == b"PK xlsx"

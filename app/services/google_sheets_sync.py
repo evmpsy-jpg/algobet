@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_SHEETS_LAST_SHA_KEY = "google_sheets.last_sha256"
 GOOGLE_SHEETS_UPLOADED_BY = 0
+GOOGLE_SHEETS_EXPORT_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
 
 class GoogleSyncBot(Protocol):
@@ -45,16 +46,37 @@ def google_sheet_download_path(uploads_dir: Path, now: datetime | None = None) -
     return uploads_dir / f"google-sheets-{now:%Y%m%d-%H%M%S}.xlsx"
 
 
-def download_google_sheet_xlsx(sheet_id: str, destination: Path) -> None:
+def google_service_account_token(service_account_file: str) -> str:
+    path = Path(service_account_file).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"Файл сервисного аккаунта не найден: {path}")
+
+    from google.auth.transport.requests import Request
+    from google.oauth2 import service_account
+
+    credentials = service_account.Credentials.from_service_account_file(
+        str(path),
+        scopes=[GOOGLE_SHEETS_EXPORT_SCOPE],
+    )
+    credentials.refresh(Request())
+    if not credentials.token:
+        raise ValueError("Google не вернул access token для сервисного аккаунта.")
+    return credentials.token
+
+
+def download_google_sheet_xlsx(sheet_id: str, destination: Path, service_account_file: str = "") -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    headers = {"User-Agent": "AlgobetBot/1.0"}
+    if service_account_file.strip():
+        headers["Authorization"] = f"Bearer {google_service_account_token(service_account_file)}"
     request = urllib.request.Request(
         google_sheet_export_url(sheet_id),
-        headers={"User-Agent": "AlgobetBot/1.0"},
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         data = response.read()
     if not data.startswith(b"PK"):
-        raise ValueError("Google Sheets не отдал XLSX. Проверьте доступ к таблице по ссылке.")
+        raise ValueError("Google Sheets не отдал XLSX. Проверьте доступ сервисного аккаунта к таблице.")
     destination.write_bytes(data)
 
 
@@ -73,8 +95,9 @@ async def sync_google_sheet_once(bot: GoogleSyncBot | None = None) -> GoogleShee
         return GoogleSheetsSyncResult(status="disabled", message="Google Sheet ID не указан.")
 
     destination = google_sheet_download_path(settings.uploads_dir)
+    service_account_file = str(getattr(settings, "google_service_account_file", "") or "")
     try:
-        await asyncio.to_thread(download_google_sheet_xlsx, settings.google_sheet_id, destination)
+        await asyncio.to_thread(download_google_sheet_xlsx, settings.google_sheet_id, destination, service_account_file)
         file_hash = calculate_sha256(destination)
         async with SessionFactory() as session:
             previous_hash = await get_bot_setting(session, GOOGLE_SHEETS_LAST_SHA_KEY, "")
@@ -126,7 +149,8 @@ async def google_sheets_sync_loop(bot: GoogleSyncBot) -> None:
         return
 
     interval_seconds = max(1, int(settings.google_sheets_sync_interval_minutes)) * 60
-    logger.info("Google Sheets sync enabled: every %s seconds", interval_seconds)
+    auth_mode = "service_account" if getattr(settings, "google_service_account_file", "") else "public_link"
+    logger.info("Google Sheets sync enabled: every %s seconds, auth=%s", interval_seconds, auth_mode)
     while True:
         await sync_google_sheet_once(bot)
         await asyncio.sleep(interval_seconds)

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     analysis_specialist_contact: str = Field(default="@your_specialist", alias="ANALYSIS_SPECIALIST_CONTACT")
     google_sheets_sync_enabled: bool = Field(default=False, alias="GOOGLE_SHEETS_SYNC_ENABLED")
     google_sheet_id: str = Field(default="", alias="GOOGLE_SHEET_ID")
+    google_service_account_file: str = Field(default="", alias="GOOGLE_SERVICE_ACCOUNT_FILE")
     google_sheets_sync_interval_minutes: int = Field(default=20, alias="GOOGLE_SHEETS_SYNC_INTERVAL_MINUTES")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
