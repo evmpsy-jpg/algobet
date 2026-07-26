@@ -711,7 +711,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .metric span {{ display:block; color:var(--muted); font-size:13px; margin-bottom:8px; }}
     .metric strong {{ font-size:30px; line-height:1; }}
     .sections {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:18px; }}
-    section {{ padding:16px; margin-bottom:18px; overflow-x:auto; }}
+    section {{ padding:16px; margin-bottom:18px; min-width:0; }}
     .pills {{ display:flex; flex-wrap:wrap; gap:8px; }}
     .pill {{ display:inline-flex; gap:7px; align-items:center; border:1px solid var(--line); border-radius:999px; padding:6px 10px; background:#fbfcfe; font-size:13px; }}
     .pill.danger {{ border-color:#fecaca; background:#fef2f2; color:#991b1b; }}
@@ -724,8 +724,10 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .health-problem .health-status {{ background:#fee2e2; color:#991b1b; }}
     .details {{ display:grid; grid-template-columns:140px 1fr; gap:8px 12px; margin:0; }}
     dt {{ color:var(--muted); }} dd {{ margin:0; }}
-    table {{ width:100%; min-width:720px; border-collapse:collapse; font-size:14px; }}
+    table {{ width:100%; border-collapse:collapse; font-size:14px; }}
     th, td {{ border-bottom:1px solid var(--line); padding:10px 8px; text-align:left; vertical-align:top; }}
+    .table-scroll {{ width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+    .table-scroll table {{ min-width:720px; }}
     th {{ color:var(--muted); font-size:12px; text-transform:uppercase; }}
     .filters {{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }}
     .settings-form {{ display:grid; gap:8px; max-width:760px; }}
@@ -741,7 +743,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .doc-page code {{ padding:2px 5px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:4px; }}
     .doc-page a {{ color:var(--accent); font-weight:700; }}
     @media (max-width:900px) {{ .grid,.sections {{ grid-template-columns:1fr 1fr; }} }}
-    @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections,.health-list {{ grid-template-columns:1fr; }} section {{ -webkit-overflow-scrolling:touch; }} table {{ font-size:13px; min-width:680px; }} th.optional,td.optional {{ display:none; }} }}
+    @media (max-width:620px) {{ header {{ align-items:flex-start; flex-direction:column; }} main {{ padding:14px; }} .grid,.sections,.health-list {{ grid-template-columns:1fr; }} .table-scroll table {{ min-width:680px; }} table {{ font-size:13px; }} th.optional,td.optional {{ display:none; }} }}
   </style>
 </head>
 <body>
@@ -1326,7 +1328,7 @@ def render_user_detail_html(detail: UserDetail, *, token: str = "") -> str:
       <section><h2>Заявки</h2><div class="pills">{_fmt_counts(detail.request_kind_counts)}{_fmt_counts(detail.request_status_counts)}</div></section>
       <section><h2>Управление доступом</h2>{_user_access_buttons(item.id)}</section>
     </div>
-    <section><h2>Последние доставки</h2><table><thead><tr><th>ID</th><th>Сигнал</th><th>Доставка</th><th>Группа</th><th>Матч</th><th>Результат</th><th>Создано</th><th>Отправлено</th><th>Ошибка</th></tr></thead><tbody>{delivery_rows}</tbody></table></section>
+    <section><h2>Последние доставки</h2><div class="table-scroll"><table><thead><tr><th>ID</th><th>Сигнал</th><th>Доставка</th><th>Группа</th><th>Матч</th><th>Результат</th><th>Создано</th><th>Отправлено</th><th>Ошибка</th></tr></thead><tbody>{delivery_rows}</tbody></table></div></section>
     <section><h2>Заявки</h2><table><thead><tr><th>Тип</th><th>ID</th><th>Статус</th><th>Название</th><th>Создано</th></tr></thead><tbody>{request_rows}</tbody></table></section>
     """
     return _base_html(f"Пользователь #{item.id}", body, token=token)
