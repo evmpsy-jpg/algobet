@@ -1,7 +1,7 @@
-﻿from datetime import datetime
+from datetime import datetime
 
-from app.database.models import ImportBatch, Match, ScheduledSignal
-from app.handlers.user import format_tournament_analytics
+from app.database.models import ImportBatch, Match, ScheduledSignal, User, UserAccess
+from app.handlers.user import filter_accessible_signal_rows, format_tournament_analytics
 
 
 def make_match() -> Match:
@@ -29,7 +29,6 @@ def test_format_tournament_analytics_without_import() -> None:
         active_matches=0,
         scheduled_signals=0,
         ready_signals=0,
-        upcoming_matches=[],
         upcoming_signals=[],
     )
 
@@ -62,7 +61,6 @@ def test_format_tournament_analytics_shows_matches_and_signals() -> None:
         active_matches=8,
         scheduled_signals=2,
         ready_signals=1,
-        upcoming_matches=[match],
         upcoming_signals=[(signal, match)],
     )
 
@@ -70,5 +68,67 @@ def test_format_tournament_analytics_shows_matches_and_signals() -> None:
     assert "Актуальных матчей: 8" in text
     assert "Запланированных сигналов: 2" in text
     assert "Готовых к отправке: 1" in text
-    assert "22.07 15:00 · Игрок 1 — Игрок 2" in text
+    assert "Ближайшие матчи" not in text
     assert "22.07 10:40 · TOP · П1" in text
+
+def test_format_tournament_analytics_shows_all_provided_signals() -> None:
+    batch = ImportBatch(
+        file_name="sample.xlsx",
+        stored_path="sample.xlsx",
+        file_sha256="abc",
+        uploaded_by_telegram_id=1,
+        status="completed",
+        parsed_matches=10,
+        created_at=datetime(2026, 7, 22, 7, 0),
+        finished_at=datetime(2026, 7, 22, 7, 1),
+    )
+    signals = []
+    for index in range(7):
+        match = make_match()
+        match.player_1 = f"Игрок {index + 1}"
+        match.player_2 = "Соперник"
+        signal = ScheduledSignal(
+            match_id=index + 1,
+            status="scheduled",
+            send_at=datetime(2026, 7, 22, 8, index),
+            signal_payload={"level": "STANDARD", "side": 2},
+            message_text="signal",
+        )
+        signals.append((signal, match))
+
+    text = format_tournament_analytics(
+        latest_import=batch,
+        total_matches=10,
+        active_matches=8,
+        scheduled_signals=7,
+        ready_signals=0,
+        upcoming_signals=signals,
+    )
+
+    assert text.count("STANDARD · П2") == 7
+
+def test_filter_accessible_signal_rows_respects_subscription_groups() -> None:
+    user = User(id=1, telegram_id=1001)
+    access = UserAccess(
+        user_id=1,
+        access_type="paid",
+        status="active",
+        includes_vip=True,
+        includes_all_signals=False,
+        includes_analytics=True,
+        signals_remaining=10,
+    )
+    vip_signal = ScheduledSignal(match_id=1, status="scheduled", send_at=datetime(2026, 7, 22, 8, 0), signal_payload={"signal_group": "vip"})
+    all_signal = ScheduledSignal(match_id=2, status="scheduled", send_at=datetime(2026, 7, 22, 8, 5), signal_payload={"signal_group": "all"})
+    vip_match = make_match()
+    all_match = make_match()
+
+    rows = filter_accessible_signal_rows(
+        user,
+        access,
+        [(vip_signal, vip_match), (all_signal, all_match)],
+        admin_ids=[],
+        now=datetime(2026, 7, 22, 7, 0),
+    )
+
+    assert rows == [(vip_signal, vip_match)]

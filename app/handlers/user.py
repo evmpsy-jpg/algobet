@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
@@ -234,6 +234,26 @@ def format_subscription_status(user: User | None, access: UserAccess | None, *, 
 
 
 
+def filter_accessible_signal_rows(
+    user: User,
+    access: UserAccess | None,
+    signal_rows: list[tuple[ScheduledSignal, Match]],
+    *,
+    admin_ids: list[int],
+    now: datetime,
+) -> list[tuple[ScheduledSignal, Match]]:
+    return [
+        (signal, match)
+        for signal, match in signal_rows
+        if has_signal_access(
+            user,
+            access,
+            admin_ids=admin_ids,
+            now=now,
+            signal_payload=signal.signal_payload,
+        )
+    ]
+
 def format_tournament_analytics(
     *,
     latest_import: ImportBatch | None,
@@ -241,7 +261,6 @@ def format_tournament_analytics(
     active_matches: int,
     scheduled_signals: int,
     ready_signals: int,
-    upcoming_matches: list[Match],
     upcoming_signals: list[tuple[ScheduledSignal, Match]],
 ) -> str:
     lines = ["📊 Аналитика турниров", ""]
@@ -256,17 +275,10 @@ def format_tournament_analytics(
         f"Запланированных сигналов: {scheduled_signals}",
         f"Готовых к отправке: {ready_signals}",
         "",
-        "Ближайшие матчи:",
+        "Ближайшие сигналы:",
     ])
-    if upcoming_matches:
-        for match in upcoming_matches[:5]:
-            lines.append(f"• {_fmt_dt(match.match_start_at)} · {match.player_1} — {match.player_2}")
-    else:
-        lines.append("пока нет ближайших матчей")
-
-    lines.extend(["", "Ближайшие сигналы:"])
     if upcoming_signals:
-        for signal, match in upcoming_signals[:5]:
+        for signal, match in upcoming_signals:
             payload = signal.signal_payload or {}
             side = payload.get("side")
             side_text = f"П{side}" if side in (1, 2) else "—"
@@ -300,27 +312,34 @@ async def tournament_analytics_handler(message: Message) -> None:
         active_matches = int(await session.scalar(select(func.count(Match.id)).where(Match.is_present_in_latest_import.is_(True))) or 0)
         scheduled_signals = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "scheduled")) or 0)
         ready_signals = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "ready")) or 0)
-        upcoming_matches = list((await session.scalars(
-            select(Match)
-            .where(Match.is_present_in_latest_import.is_(True))
-            .where(Match.match_start_at >= now)
-            .order_by(Match.match_start_at.asc())
-            .limit(5)
-        )).all())
-        upcoming_signals = list((await session.execute(
+        user, access = row
+        local_now = now.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(settings.timezone))
+        day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        day_start_utc = day_start.astimezone(timezone.utc).replace(tzinfo=None)
+        day_end_utc = day_end.astimezone(timezone.utc).replace(tzinfo=None)
+        signal_rows = list((await session.execute(
             select(ScheduledSignal, Match)
             .join(Match, Match.id == ScheduledSignal.match_id)
             .where(ScheduledSignal.status.in_(["scheduled", "ready"]))
+            .where(ScheduledSignal.send_at >= now)
+            .where(ScheduledSignal.send_at >= day_start_utc)
+            .where(ScheduledSignal.send_at < day_end_utc)
             .order_by(ScheduledSignal.send_at.asc())
-            .limit(5)
         )).all())
+        upcoming_signals = filter_accessible_signal_rows(
+            user,
+            access,
+            signal_rows,
+            admin_ids=settings.admin_ids,
+            now=now,
+        )
     await message.answer(format_tournament_analytics(
         latest_import=latest_import,
         total_matches=total_matches,
         active_matches=active_matches,
         scheduled_signals=scheduled_signals,
         ready_signals=ready_signals,
-        upcoming_matches=upcoming_matches,
         upcoming_signals=upcoming_signals,
     ))
 
@@ -419,7 +438,7 @@ def format_help_information() -> str:
         "• результаты фиксируются вручную или автоматически по счету из новой загрузки.",
         "",
         "Где что смотреть:",
-        "• 📊 Аналитика турниров — свежая загрузка, ближайшие матчи и сигналы;",
+        "• 📊 Аналитика турниров — свежая загрузка и доступные сигналы на сегодня;",
         "• 💳 Подписка — ваш текущий доступ;",
         "• 🏆 Результаты — последние оцененные сигналы и winrate;",
         "• 🎁 Первые 3 сигнала — активация пробного доступа.",
