@@ -104,5 +104,5 @@ def test_download_google_sheet_xlsx_uses_service_account_token(monkeypatch: pyte
     destination = tmp_path / "sheet.xlsx"
     download_google_sheet_xlsx("sheet-id", destination, "service.json")
 
-    assert captured == {"authorization": "Bearer token-123", "timeout": 60}
+    assert captured == {"authorization": "Bearer token-123", "timeout": 240}
     assert destination.read_bytes() == b"PK xlsx"

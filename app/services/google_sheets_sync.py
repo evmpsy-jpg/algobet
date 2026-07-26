@@ -73,7 +73,7 @@ def download_google_sheet_xlsx(sheet_id: str, destination: Path, service_account
         google_sheet_export_url(sheet_id),
         headers=headers,
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=240) as response:
         data = response.read()
     if not data.startswith(b"PK"):
         raise ValueError("Google Sheets не отдал XLSX. Проверьте доступ сервисного аккаунта к таблице.")
