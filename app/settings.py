@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     google_sheet_id: str = Field(default="", alias="GOOGLE_SHEET_ID")
     google_service_account_file: str = Field(default="", alias="GOOGLE_SERVICE_ACCOUNT_FILE")
     google_sheets_sync_interval_minutes: int = Field(default=20, alias="GOOGLE_SHEETS_SYNC_INTERVAL_MINUTES")
+    google_sheets_sync_max_rows: int = Field(default=1200, alias="GOOGLE_SHEETS_SYNC_MAX_ROWS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -1,4 +1,4 @@
-from app.services.google_sheets_api import parse_google_sheets_grid
+from app.services.google_sheets_api import _bounded_range, parse_google_sheets_grid
 
 
 def cell(value=None, *, formula=None, hyperlink=None, formatted=None):
@@ -53,3 +53,7 @@ def test_parse_google_sheets_grid_reads_first_sheet_hyperlinks_and_values() -> N
     assert match.match_time == "12:30"
     assert match.raw_data["Q"] == 9
     assert match.raw_data["_tournament_name"] == "Лига"
+
+def test_bounded_range_limits_rows() -> None:
+    assert _bounded_range("A:CT", 500) == "A1:CT500"
+    assert _bounded_range("A:CT", 0) == "A:CT"

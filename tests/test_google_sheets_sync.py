@@ -62,7 +62,7 @@ async def test_sync_google_sheet_once_skips_unchanged_hash(monkeypatch: pytest.M
             admin_ids=[],
         ),
     )
-    monkeypatch.setattr("app.services.google_sheets_sync.parse_google_sheet_with_service_account", lambda sheet_id, path, timezone: parsed)
+    monkeypatch.setattr("app.services.google_sheets_sync.parse_google_sheet_with_service_account", lambda sheet_id, path, timezone, max_rows: parsed)
     monkeypatch.setattr("app.services.google_sheets_sync.SessionFactory", lambda: FakeSession())
     monkeypatch.setattr("app.services.google_sheets_sync.get_bot_setting", fake_get_bot_setting)
 

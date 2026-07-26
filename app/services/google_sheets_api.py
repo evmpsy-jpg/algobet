@@ -15,6 +15,7 @@ from app.services.spreadsheet_metrics import calculate_signal_columns
 
 GOOGLE_SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
 DEFAULT_RANGE_COLUMNS = "A:CT"
+DEFAULT_MAX_ROWS = 1200
 
 
 def _request_json(url: str, token: str, *, timeout: int = 45) -> dict[str, Any]:
@@ -47,9 +48,22 @@ def first_sheet_title(sheet_id: str, token: str) -> str:
     return str(title)
 
 
-def fetch_first_sheet_grid(sheet_id: str, token: str, *, columns: str = DEFAULT_RANGE_COLUMNS) -> dict[str, Any]:
+def _bounded_range(columns: str, max_rows: int | None) -> str:
+    if max_rows is None or int(max_rows) <= 0 or ":" not in columns:
+        return columns
+    start, end = columns.split(":", 1)
+    return f"{start}1:{end}{int(max_rows)}"
+
+
+def fetch_first_sheet_grid(
+    sheet_id: str,
+    token: str,
+    *,
+    columns: str = DEFAULT_RANGE_COLUMNS,
+    max_rows: int = DEFAULT_MAX_ROWS,
+) -> dict[str, Any]:
     title = first_sheet_title(sheet_id, token)
-    range_name = f"{_quote_sheet_name(title)}!{columns}"
+    range_name = f"{_quote_sheet_name(title)}!{_bounded_range(columns, max_rows)}"
     params = urllib.parse.urlencode({
         "includeGridData": "true",
         "ranges": range_name,
@@ -209,5 +223,5 @@ def parse_google_sheets_grid(payload: dict[str, Any], timezone: str = "Europe/Mo
     )
 
 
-def parse_google_sheet(sheet_id: str, token: str, timezone: str = "Europe/Moscow") -> ParseResult:
-    return parse_google_sheets_grid(fetch_first_sheet_grid(sheet_id, token), timezone)
+def parse_google_sheet(sheet_id: str, token: str, timezone: str = "Europe/Moscow", *, max_rows: int = DEFAULT_MAX_ROWS) -> ParseResult:
+    return parse_google_sheets_grid(fetch_first_sheet_grid(sheet_id, token, max_rows=max_rows), timezone)

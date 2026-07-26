@@ -53,9 +53,9 @@ def google_service_account_token(service_account_file: str) -> str:
     return credentials.token
 
 
-def parse_google_sheet_with_service_account(sheet_id: str, service_account_file: str, timezone: str):
+def parse_google_sheet_with_service_account(sheet_id: str, service_account_file: str, timezone: str, max_rows: int):
     token = google_service_account_token(service_account_file)
-    return parse_google_sheet(sheet_id, token, timezone)
+    return parse_google_sheet(sheet_id, token, timezone, max_rows=max_rows)
 
 
 def parse_result_hash(result) -> str:
@@ -99,6 +99,7 @@ async def sync_google_sheet_once(bot: GoogleSyncBot | None = None) -> GoogleShee
                     settings.google_sheet_id,
                     service_account_file,
                     settings.timezone,
+                    int(getattr(settings, "google_sheets_sync_max_rows", 1200)),
                 ),
                 timeout=90,
             )
@@ -154,7 +155,7 @@ async def google_sheets_sync_loop(bot: GoogleSyncBot) -> None:
         return
 
     interval_seconds = max(1, int(settings.google_sheets_sync_interval_minutes)) * 60
-    logger.info("Google Sheets sync enabled: every %s seconds, mode=sheets_api", interval_seconds)
+    logger.info("Google Sheets sync enabled: every %s seconds, mode=sheets_api, max_rows=%s", interval_seconds, int(getattr(settings, "google_sheets_sync_max_rows", 1200)))
     while True:
         await sync_google_sheet_once(bot)
         await asyncio.sleep(interval_seconds)
