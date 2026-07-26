@@ -116,6 +116,7 @@ async def sync_google_sheet_once(bot: GoogleSyncBot | None = None) -> GoogleShee
                     stored_path=f"google-sheets://{settings.google_sheet_id}/{result.sheet_name}",
                     file_hash=file_hash,
                     uploaded_by=GOOGLE_SHEETS_UPLOADED_BY,
+                    mark_missing=False,
                 )
                 await set_bot_setting(session, GOOGLE_SHEETS_LAST_SHA_KEY, file_hash, max_length=64)
                 await session.commit()

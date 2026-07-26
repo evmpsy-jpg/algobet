@@ -60,6 +60,7 @@ async def import_parse_result(
     stored_path: str,
     file_hash: str,
     uploaded_by: int,
+    mark_missing: bool = True,
 ) -> ImportSummary:
     settings = get_settings()
     batch = ImportBatch(
@@ -81,12 +82,13 @@ async def import_parse_result(
     scheduled_by_group: Counter[str] = Counter()
     rejection_reasons: Counter[str] = Counter()
 
-    # Сначала отмечаем прошлые матчи отсутствующими. Найденные ниже вернём в актуальное состояние.
-    await session.execute(
-        update(Match)
-        .where(Match.is_present_in_latest_import.is_(True))
-        .values(is_present_in_latest_import=False)
-    )
+    if mark_missing:
+        # Сначала отмечаем прошлые матчи отсутствующими. Найденные ниже вернём в актуальное состояние.
+        await session.execute(
+            update(Match)
+            .where(Match.is_present_in_latest_import.is_(True))
+            .values(is_present_in_latest_import=False)
+        )
 
     for parsed in result.matches:
         existing = await session.scalar(
@@ -197,8 +199,10 @@ async def import_parse_result(
         elif not decision.suitable:
             rejection_reasons[decision.reason or "Матч не соответствует условиям"] += 1
 
-    missing_query = select(Match).where(Match.is_present_in_latest_import.is_(False))
-    missing_matches = list((await session.scalars(missing_query)).all())
+    missing_matches = []
+    if mark_missing:
+        missing_query = select(Match).where(Match.is_present_in_latest_import.is_(False))
+        missing_matches = list((await session.scalars(missing_query)).all())
     for missing in missing_matches:
         signal = await session.scalar(
             select(ScheduledSignal).where(ScheduledSignal.match_id == missing.id)
@@ -238,6 +242,7 @@ async def import_tournaments(
     file_path: Path,
     original_name: str,
     uploaded_by: int,
+    mark_missing: bool = True,
 ) -> ImportSummary:
     settings = get_settings()
     file_hash = calculate_sha256(file_path)
@@ -249,4 +254,5 @@ async def import_tournaments(
         stored_path=str(file_path),
         file_hash=file_hash,
         uploaded_by=uploaded_by,
+        mark_missing=mark_missing,
     )
