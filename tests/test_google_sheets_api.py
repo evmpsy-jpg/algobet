@@ -1,4 +1,4 @@
-from app.services.google_sheets_api import _bounded_range, parse_google_sheets_grid
+from app.services.google_sheets_api import _bounded_range, _last_data_row_from_values, parse_google_sheets_grid
 
 
 def cell(value=None, *, formula=None, hyperlink=None, formatted=None):
@@ -58,3 +58,14 @@ def test_bounded_range_limits_rows() -> None:
     assert _bounded_range("A:CT", 500) == "A1:CT500"
     assert _bounded_range("A:CT", 500, 2000) == "A1501:CT2000"
     assert _bounded_range("A:CT", 0) == "A:CT"
+
+
+def test_last_data_row_from_values_ignores_formula_tail() -> None:
+    values = [
+        ["26.07.2026"],
+        ["", "12:30", "Игрок 1 - Игрок 2"],
+        ["", "", ""],
+        ["", "=FORMULA", ""],
+    ]
+
+    assert _last_data_row_from_values(values) == 2

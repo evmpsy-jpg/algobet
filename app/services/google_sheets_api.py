@@ -16,6 +16,7 @@ from app.services.spreadsheet_metrics import calculate_signal_columns
 GOOGLE_SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
 DEFAULT_RANGE_COLUMNS = "A:CT"
 DEFAULT_MAX_ROWS = 1200
+MATCH_TIME_RE = re.compile(r"^\d{1,2}:\d{2}")
 
 
 def _request_json(url: str, token: str, *, timeout: int = 45) -> dict[str, Any]:
@@ -62,6 +63,32 @@ def last_non_empty_row(sheet_id: str, token: str, sheet_name: str, *, column: st
     values = value_ranges[0].get("values") if value_ranges else []
     return len(values or [])
 
+
+def _last_data_row_from_values(values: list[list[Any]]) -> int:
+    for index in range(len(values) - 1, -1, -1):
+        row = values[index]
+        time_value = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
+        match_value = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
+        if MATCH_TIME_RE.match(time_value) and match_value:
+            return index + 1
+    return len(values or [])
+
+
+def last_data_row(sheet_id: str, token: str, sheet_name: str) -> int:
+    range_name = f"{_quote_sheet_name(sheet_name)}!A:C"
+    params = urllib.parse.urlencode({
+        "ranges": range_name,
+        "majorDimension": "ROWS",
+        "valueRenderOption": "FORMATTED_VALUE",
+        "fields": "valueRanges(values)",
+    })
+    url = f"{GOOGLE_SHEETS_API_BASE}/{urllib.parse.quote(sheet_id)}/values:batchGet?{params}"
+    payload = _request_json(url, token, timeout=45)
+    value_ranges = payload.get("valueRanges") or []
+    values = value_ranges[0].get("values") if value_ranges else []
+    return _last_data_row_from_values(values or [])
+
+
 def _bounded_range(columns: str, max_rows: int | None, last_row: int | None = None) -> str:
     if max_rows is None or int(max_rows) <= 0 or ":" not in columns:
         return columns
@@ -81,7 +108,7 @@ def fetch_first_sheet_grid(
     max_rows: int = DEFAULT_MAX_ROWS,
 ) -> dict[str, Any]:
     title = first_sheet_title(sheet_id, token)
-    last_row = last_non_empty_row(sheet_id, token, title)
+    last_row = last_data_row(sheet_id, token, title)
     range_name = f"{_quote_sheet_name(title)}!{_bounded_range(columns, max_rows, last_row)}"
     params = urllib.parse.urlencode({
         "includeGridData": "true",
