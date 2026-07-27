@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from app.services.excel_parser import ParseResult
-from app.services.google_sheets_sync import GoogleSheetsSyncResult, parse_result_hash, sync_google_sheet_once
+from app.services.google_sheets_sync import (
+    GoogleSheetsSyncResult,
+    parse_result_hash,
+    parse_schedule_minutes,
+    seconds_until_next_schedule,
+    sync_google_sheet_once,
+)
 
 
 def test_parse_result_hash_is_stable() -> None:
@@ -69,3 +76,24 @@ async def test_sync_google_sheet_once_skips_unchanged_hash(monkeypatch: pytest.M
     result = await sync_google_sheet_once()
 
     assert result == GoogleSheetsSyncResult(status="skipped", file_hash=file_hash, message="Изменений нет.")
+
+def test_parse_schedule_minutes_sorts_and_deduplicates() -> None:
+    assert parse_schedule_minutes("55, 10,25,40,10") == [10, 25, 40, 55]
+
+
+@pytest.mark.parametrize("value", ["-1", "60", "10,bad"])
+def test_parse_schedule_minutes_rejects_invalid_values(value: str) -> None:
+    with pytest.raises(ValueError):
+        parse_schedule_minutes(value)
+
+
+def test_seconds_until_next_schedule_uses_fixed_minutes() -> None:
+    now = datetime(2026, 7, 27, 14, 9, 30, tzinfo=timezone.utc)
+
+    assert seconds_until_next_schedule([10, 25, 40, 55], now) == 30
+
+
+def test_seconds_until_next_schedule_rolls_to_next_hour() -> None:
+    now = datetime(2026, 7, 27, 14, 55, 1, tzinfo=timezone.utc)
+
+    assert seconds_until_next_schedule([10, 25, 40, 55], now) == 14 * 60 + 59

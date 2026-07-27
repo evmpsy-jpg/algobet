@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -146,6 +147,34 @@ async def sync_google_sheet_once(bot: GoogleSyncBot | None = None) -> GoogleShee
     return GoogleSheetsSyncResult(status="imported", file_hash=file_hash, summary=summary)
 
 
+def parse_schedule_minutes(value: str) -> list[int]:
+    minutes: set[int] = set()
+    for item in str(value or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        minute = int(item)
+        if minute < 0 or minute > 59:
+            raise ValueError("Минуты расписания Google Sheets должны быть от 0 до 59.")
+        minutes.add(minute)
+    return sorted(minutes)
+
+
+def seconds_until_next_schedule(minutes: list[int], now: datetime | None = None) -> float:
+    if not minutes:
+        raise ValueError("Не указаны минуты расписания Google Sheets.")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    base = current.replace(second=0, microsecond=0)
+    for minute in sorted(minutes):
+        candidate = base.replace(minute=minute)
+        if candidate >= current:
+            return max(0.0, (candidate - current).total_seconds())
+    candidate = (base + timedelta(hours=1)).replace(minute=sorted(minutes)[0])
+    return max(0.0, (candidate - current).total_seconds())
+
+
 async def google_sheets_sync_loop(bot: GoogleSyncBot) -> None:
     settings = get_settings()
     if not settings.google_sheets_sync_enabled:
@@ -155,8 +184,30 @@ async def google_sheets_sync_loop(bot: GoogleSyncBot) -> None:
         logger.warning("Google Sheets sync enabled, but GOOGLE_SHEET_ID is empty")
         return
 
-    interval_seconds = max(1, int(settings.google_sheets_sync_interval_minutes)) * 60
-    logger.info("Google Sheets sync enabled: every %s seconds, mode=sheets_api, max_rows=%s", interval_seconds, int(getattr(settings, "google_sheets_sync_max_rows", 1200)))
-    while True:
-        await sync_google_sheet_once(bot)
-        await asyncio.sleep(interval_seconds)
+    schedule_minutes: list[int] = []
+    schedule_text = str(getattr(settings, "google_sheets_sync_schedule_minutes", "") or "")
+    if schedule_text.strip():
+        try:
+            schedule_minutes = parse_schedule_minutes(schedule_text)
+        except ValueError as exc:
+            logger.warning("Invalid GOOGLE_SHEETS_SYNC_SCHEDULE_MINUTES=%r: %s", schedule_text, exc)
+
+    if schedule_minutes:
+        logger.info(
+            "Google Sheets sync enabled: schedule_minutes=%s, mode=sheets_api, max_rows=%s",
+            schedule_minutes,
+            int(getattr(settings, "google_sheets_sync_max_rows", 1200)),
+        )
+        while True:
+            await asyncio.sleep(seconds_until_next_schedule(schedule_minutes))
+            await sync_google_sheet_once(bot)
+    else:
+        interval_seconds = max(1, int(settings.google_sheets_sync_interval_minutes)) * 60
+        logger.info(
+            "Google Sheets sync enabled: every %s seconds, mode=sheets_api, max_rows=%s",
+            interval_seconds,
+            int(getattr(settings, "google_sheets_sync_max_rows", 1200)),
+        )
+        while True:
+            await sync_google_sheet_once(bot)
+            await asyncio.sleep(interval_seconds)
