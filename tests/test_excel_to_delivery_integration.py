@@ -68,7 +68,7 @@ async def test_excel_import_creates_signals_and_delivers_trial_messages(monkeypa
         scheduled_count = int(await session.scalar(select(func.count(ScheduledSignal.id))) or 0)
 
         assert summary.parsed_matches == 168
-        assert summary.scheduled_signals == 20
+        assert summary.scheduled_signals == 35
         assert sum(summary.scheduled_by_group.values()) == summary.scheduled_signals
         assert summary.scheduled_by_group.get("vip", 0) + summary.scheduled_by_group.get("all", 0) == summary.scheduled_signals
         assert match_count == summary.parsed_matches
@@ -93,7 +93,7 @@ async def test_excel_import_creates_signals_and_delivers_trial_messages(monkeypa
         assert len(deliveries) == 3
         assert all(delivery.status == "sent" for delivery in deliveries)
         assert sent_signals == 3
-        assert ready_signals == 17
+        assert ready_signals == 32
         assert access.free_signals_remaining == 0
         assert all("СИГНАЛ" in message for _, message in bot.messages)
 

@@ -75,13 +75,6 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         )
     )
 
-    if not cp_ok:
-        return SignalDecision(
-            suitable=False,
-            reason=traces[-1].message,
-            traces=traces,
-        )
-
     # ---------------------------------------------------------
     # Первичные условия кандидатов.
     #
@@ -104,8 +97,6 @@ def evaluate_match(match: MatchData) -> SignalDecision:
 
     p1_base = p1_all or p1_vip
     p2_base = p2_all or p2_vip
-    p1_signal_group = "vip" if p1_vip else "all" if p1_all else None
-    p2_signal_group = "vip" if p2_vip else "all" if p2_all else None
 
     traces.append(
         _trace(
@@ -139,6 +130,11 @@ def evaluate_match(match: MatchData) -> SignalDecision:
 
     # ---------------------------------------------------------
     # Дополнительные фильтры.
+    #
+    # ALL проходит без STOP по CP и форме.
+    # VIP требует CP >= min_h2h_games и форму выбранной стороны >= min_form.
+    # Если сторона подходит и под ALL, и под VIP, VIP получает приоритет
+    # только когда VIP-фильтры пройдены.
     # ---------------------------------------------------------
     min_form = float(rules["min_favorite_form"])
     p1_form_ok = (
@@ -151,11 +147,11 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         and match.form_p2 >= min_form
     )
 
-    if p1_base:
+    if p1_vip:
         traces.append(
             _trace(
                 code="P1_FORM",
-                label="Форма P1 (Q)",
+                label="Форма P1 (Q) для VIP",
                 passed=p1_form_ok,
                 actual=match.form_p1,
                 expected=f">= {min_form:g}",
@@ -163,12 +159,11 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             )
         )
 
-
-    if p2_base:
+    if p2_vip:
         traces.append(
             _trace(
                 code="P2_FORM",
-                label="Форма P2 (X)",
+                label="Форма P2 (X) для VIP",
                 passed=p2_form_ok,
                 actual=match.form_p2,
                 expected=f">= {min_form:g}",
@@ -176,16 +171,12 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             )
         )
 
-
-    p1_ok = (
-        p1_base
-        and p1_form_ok
-    )
-
-    p2_ok = (
-        p2_base
-        and p2_form_ok
-    )
+    p1_vip_ok = p1_vip and cp_ok and p1_form_ok
+    p2_vip_ok = p2_vip and cp_ok and p2_form_ok
+    p1_ok = p1_all or p1_vip_ok
+    p2_ok = p2_all or p2_vip_ok
+    p1_signal_group = "vip" if p1_vip_ok else "all" if p1_all else None
+    p2_signal_group = "vip" if p2_vip_ok else "all" if p2_all else None
 
     if not p1_ok and not p2_ok:
         failed = [

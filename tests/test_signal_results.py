@@ -101,8 +101,10 @@ def test_summarize_results_reports_unrated_sent_signals() -> None:
 
 def test_infer_signal_result_status_from_match_score() -> None:
     assert infer_signal_result_status("3:1", 1) == "won"
-    assert infer_signal_result_status("3:1", 2) == "lost"
+    assert infer_signal_result_status("3:1", 2) == "won"
+    assert infer_signal_result_status("8:11 11:8 9:11 11:7 8:11", 1) == "won"
     assert infer_signal_result_status("8:11 11:8 9:11 11:7 8:11", 2) == "won"
+    assert infer_signal_result_status("11:8 11:9 11:7", 2) == "lost"
     assert infer_signal_result_status("-:-", 1) is None
     assert infer_signal_result_status(None, 1) is None
     assert infer_signal_result_status("11:11", 1) == "void"

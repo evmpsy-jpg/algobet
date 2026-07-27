@@ -354,6 +354,7 @@ def test_boundary_values_are_accepted() -> None:
 def test_p1_is_rejected_below_threshold(field: str, value: float) -> None:
     decision = evaluate_match(
         make_match(
+            all_signal_p1=None,
             p1_exact=5,
             p2_exact=0,
             p2_range=0,
@@ -432,10 +433,11 @@ def test_probability_levels() -> None:
     assert top.level == "TOP"
 
 
-def test_rejects_when_h2h_games_are_below_current_minimum() -> None:
-    decision = evaluate_match(make_match(h2h_games=4))
+def test_all_signal_ignores_h2h_stop() -> None:
+    decision = evaluate_match(make_match(h2h_games=4, all_signal_p1=8, p1_exact=0, p1_range=0))
 
-    assert decision.suitable is False
+    assert decision.suitable is True
+    assert decision.payload["signal_group"] == "all"
 
 
 def test_selects_p2_when_p1_probability_is_missing() -> None:
@@ -515,3 +517,43 @@ def test_accepts_more_than_five_h2h_games() -> None:
 
     assert decision.suitable is True
     assert decision.side == 1
+
+
+def test_vip_signal_still_requires_h2h_minimum() -> None:
+    decision = evaluate_match(
+        make_match(
+            h2h_games=4,
+            all_signal_p1=None,
+            p1_exact=5,
+            p1_range=0,
+        )
+    )
+
+    assert decision.suitable is False
+
+
+def test_all_signal_ignores_favorite_form_stop() -> None:
+    decision = evaluate_match(
+        make_match(
+            form_p1=3,
+            all_signal_p1=8,
+            p1_exact=0,
+            p1_range=0,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.payload["signal_group"] == "all"
+
+
+def test_vip_signal_still_requires_favorite_form() -> None:
+    decision = evaluate_match(
+        make_match(
+            form_p1=3,
+            all_signal_p1=None,
+            p1_exact=5,
+            p1_range=0,
+        )
+    )
+
+    assert decision.suitable is False

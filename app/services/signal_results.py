@@ -128,15 +128,16 @@ def infer_signal_result_status(score: str | None, side: int | None) -> str | Non
         left, right = pairs[0]
         if left == right:
             return "void"
-        winner = 1 if left > right else 2
-        return "won" if winner == side else "lost"
+        selected_sets = left if side == 1 else right
+        return "won" if selected_sets > 0 else "lost"
 
     p1_sets = sum(1 for left, right in pairs if left > right)
     p2_sets = sum(1 for left, right in pairs if right > left)
-    if p1_sets == p2_sets:
-        return None
-    winner = 1 if p1_sets > p2_sets else 2
-    return "won" if winner == side else "lost"
+    if p1_sets == 0 and p2_sets == 0:
+        return "void"
+    selected_sets = p1_sets if side == 1 else p2_sets
+    return "won" if selected_sets > 0 else "lost"
+
 
 
 async def auto_set_signal_result(
