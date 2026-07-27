@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.services.import_service as import_service
-from app.database.models import Base, ScheduledSignal
+from app.database.models import Base, ScheduledSignal, SignalResult
 from app.services.excel_parser import ParsedMatch, ParseResult
 from app.services.import_service import import_parse_result
 
@@ -69,5 +69,66 @@ async def test_import_parse_result_does_not_schedule_past_due_signal(monkeypatch
     assert summary.scheduled_signals == 0
     assert scheduled_count == 0
     assert summary.rejection_reasons["Время отправки сигнала уже прошло"] == 1
+
+    await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_import_parse_result_can_store_past_due_signal_for_history(monkeypatch) -> None:
+    monkeypatch.setattr(import_service, "datetime", FrozenDateTime)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    parsed = ParsedMatch(
+        external_match_id=1002,
+        external_tournament_id=2002,
+        source_url="https://example.test/tournaments/2002/1002",
+        tournament_date="27.07.2026",
+        tournament_name="Тест",
+        match_time="14:00",
+        match_start_at=datetime(2026, 7, 27, 14, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+        player_1="Игрок 1",
+        player_2="Игрок 2",
+        player_1_rating=None,
+        player_2_rating=None,
+        score="1:3",
+        raw_data={
+            "CP": 5,
+            "Q": 7,
+            "X": 7,
+            "CV": 90,
+            "CW": 10,
+            "DG": 8,
+            "DH": 0,
+            "EG": 0,
+            "EH": 0,
+            "CS": 0,
+            "CT": 0,
+        },
+    )
+    result = ParseResult(sheet_name="Лист", total_rows=1, matches=[parsed], warnings=[])
+
+    async with factory() as session:
+        summary = await import_parse_result(
+            session,
+            result,
+            original_name="google historical",
+            stored_path="google-sheets://test?historical=1",
+            file_hash="hash-history",
+            uploaded_by=1,
+            mark_missing=False,
+            past_due_signal_action="store_sent",
+        )
+        signal = await session.scalar(select(ScheduledSignal))
+        signal_result = await session.scalar(select(SignalResult))
+
+    assert summary.scheduled_signals == 1
+    assert signal is not None
+    assert signal.status == "sent"
+    assert signal.sent_at == signal.send_at
+    assert signal_result is not None
+    assert signal_result.status == "won"
+    assert signal_result.source == "auto"
 
     await engine.dispose()

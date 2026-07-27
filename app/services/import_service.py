@@ -61,7 +61,11 @@ async def import_parse_result(
     file_hash: str,
     uploaded_by: int,
     mark_missing: bool = True,
+    past_due_signal_action: str = "skip",
 ) -> ImportSummary:
+    if past_due_signal_action not in {"skip", "store_sent"}:
+        raise ValueError(f"Unsupported past_due_signal_action: {past_due_signal_action}")
+
     settings = get_settings()
     batch = ImportBatch(
         file_name=original_name,
@@ -183,6 +187,25 @@ async def import_parse_result(
             if send_at <= now_utc:
                 reason = "Время отправки сигнала уже прошло"
                 rejection_reasons[reason] += 1
+                if past_due_signal_action == "store_sent":
+                    group = str((decision.payload or {}).get("signal_group") or "unknown").strip().lower()
+                    scheduled_by_group[group if group in {"vip", "all"} else "unknown"] += 1
+                    if signal is None:
+                        signal = ScheduledSignal(match_id=existing.id, send_at=send_at)
+                        session.add(signal)
+                        await session.flush()
+                    signal.status = "sent"
+                    signal.send_at = send_at
+                    signal.sent_at = send_at
+                    signal.signal_type = decision.signal_type
+                    signal.signal_payload = decision.payload or {}
+                    signal.message_text = build_signal_message(parsed, decision)
+                    signal.source_import_id = batch.id
+                    signal.cancel_reason = None
+                    signal.recalculated_at = now_utc
+                    scheduled += 1
+                    await auto_set_signal_result(session, signal, existing)
+                    continue
                 if signal is not None and signal.status != "sent":
                     signal.status = "cancelled"
                     signal.cancel_reason = reason
@@ -259,7 +282,11 @@ async def import_tournaments(
     original_name: str,
     uploaded_by: int,
     mark_missing: bool = True,
+    past_due_signal_action: str = "skip",
 ) -> ImportSummary:
+    if past_due_signal_action not in {"skip", "store_sent"}:
+        raise ValueError(f"Unsupported past_due_signal_action: {past_due_signal_action}")
+
     settings = get_settings()
     file_hash = calculate_sha256(file_path)
     result = parse_tournaments_file(file_path, settings.timezone)
@@ -271,4 +298,5 @@ async def import_tournaments(
         file_hash=file_hash,
         uploaded_by=uploaded_by,
         mark_missing=mark_missing,
+        past_due_signal_action=past_due_signal_action,
     )

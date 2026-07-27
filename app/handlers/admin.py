@@ -7,6 +7,7 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.enums import ContentType
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -40,6 +41,17 @@ from app.services.sqlite_backup import create_sqlite_backup, latest_sqlite_backu
 from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price, format_subscription_activation_user_text
 
 router = Router(name="admin")
+
+
+async def safe_edit_text(message: Message, text: str, **kwargs: object) -> None:
+    try:
+        await message.edit_text(text, **kwargs)
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower():
+            return
+        raise
+
+
 PAGE_SIZE = 8
 PROCESS_STARTED_AT = datetime.utcnow()
 
@@ -1092,7 +1104,7 @@ async def show_sent_history(target: Message | CallbackQuery) -> None:
     )
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -1137,7 +1149,7 @@ async def show_maintenance(target: Message | CallbackQuery) -> None:
     markup = maintenance_keyboard()
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -1388,7 +1400,7 @@ async def show_subscription_requests_dashboard(target: Message | CallbackQuery) 
     markup = subscription_requests_dashboard_keyboard(counts)
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -1421,7 +1433,7 @@ async def show_subscription_requests_list(target: CallbackQuery | Message, statu
     markup = subscription_requests_list_keyboard(rows, status, page, total)
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -1547,7 +1559,7 @@ async def show_analysis_dashboard(target: Message | CallbackQuery) -> None:
     markup = analysis_dashboard_keyboard(counts)
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -1582,7 +1594,7 @@ async def show_analysis_list(target: CallbackQuery | Message, status: str, page:
     markup = analysis_list_keyboard(rows, status, page, total)
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -1744,7 +1756,7 @@ async def show_users_list(target: Message | CallbackQuery, page: int = 0) -> Non
     markup = users_list_keyboard(rows, page, total)
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -2196,7 +2208,7 @@ async def show_admin_settings(target: Message | CallbackQuery) -> None:
     markup = admin_settings_keyboard()
     if isinstance(target, CallbackQuery):
         if target.message:
-            await target.message.edit_text(text, reply_markup=markup)
+            await safe_edit_text(target.message, text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)

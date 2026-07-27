@@ -49,6 +49,43 @@ def first_sheet_title(sheet_id: str, token: str) -> str:
     return str(title)
 
 
+def fetch_sheet_values(sheet_id: str, token: str, sheet_name: str, range_columns: str) -> list[list[Any]]:
+    range_name = f"{_quote_sheet_name(sheet_name)}!{range_columns}"
+    params = urllib.parse.urlencode({
+        "ranges": range_name,
+        "majorDimension": "ROWS",
+        "valueRenderOption": "FORMATTED_VALUE",
+        "fields": "valueRanges(values)",
+    })
+    url = f"{GOOGLE_SHEETS_API_BASE}/{urllib.parse.quote(sheet_id)}/values:batchGet?{params}"
+    payload = _request_json(url, token, timeout=45)
+    value_ranges = payload.get("valueRanges") or []
+    values = value_ranges[0].get("values") if value_ranges else []
+    return list(values or [])
+
+
+def fetch_first_sheet_rows_grid(
+    sheet_id: str,
+    token: str,
+    *,
+    sheet_name: str,
+    start_row: int,
+    end_row: int,
+    columns: str = DEFAULT_RANGE_COLUMNS,
+) -> dict[str, Any]:
+    if start_row < 1 or end_row < start_row:
+        raise ValueError("Некорректный диапазон строк Google Sheets.")
+    start_column, end_column = columns.split(":", 1)
+    range_name = f"{_quote_sheet_name(sheet_name)}!{start_column}{start_row}:{end_column}{end_row}"
+    params = urllib.parse.urlencode({
+        "includeGridData": "true",
+        "ranges": range_name,
+        "fields": "sheets(properties(title),data(rowData(values(userEnteredValue,effectiveValue,formattedValue,hyperlink))))",
+    })
+    url = f"{GOOGLE_SHEETS_API_BASE}/{urllib.parse.quote(sheet_id)}?{params}"
+    return _request_json(url, token, timeout=90)
+
+
 def last_non_empty_row(sheet_id: str, token: str, sheet_name: str, *, column: str = "B") -> int:
     range_name = f"{_quote_sheet_name(sheet_name)}!{column}:{column}"
     params = urllib.parse.urlencode({

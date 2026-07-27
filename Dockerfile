@@ -15,6 +15,7 @@ COPY excel_mapping.yaml .
 COPY signal_rules.yaml .
 COPY templates ./templates
 COPY docs ./docs
+COPY scripts ./scripts
 
 RUN mkdir -p data uploads
 
