@@ -10,9 +10,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, User
 from app.services.access import grant_trial_access
+import app.services.import_service as import_service
 from app.services.import_service import import_tournaments, to_utc_naive
 from app.services.signal_sender import process_due_signals
 
+
+class FrozenDateTime(datetime):
+    @classmethod
+    def utcnow(cls) -> datetime:
+        return datetime(2026, 7, 19, 0, 0)
 
 class FakeBot:
     def __init__(self) -> None:
@@ -29,7 +35,8 @@ def test_to_utc_naive_converts_moscow_match_time_for_scheduler() -> None:
 
 
 @pytest.mark.asyncio
-async def test_excel_import_creates_signals_and_delivers_trial_messages() -> None:
+async def test_excel_import_creates_signals_and_delivers_trial_messages(monkeypatch) -> None:
+    monkeypatch.setattr(import_service, "datetime", FrozenDateTime)
     source = Path("tests/sample.xlsx")
     assert source.exists()
 
@@ -61,7 +68,7 @@ async def test_excel_import_creates_signals_and_delivers_trial_messages() -> Non
         scheduled_count = int(await session.scalar(select(func.count(ScheduledSignal.id))) or 0)
 
         assert summary.parsed_matches == 168
-        assert summary.scheduled_signals == 16
+        assert summary.scheduled_signals == 20
         assert sum(summary.scheduled_by_group.values()) == summary.scheduled_signals
         assert summary.scheduled_by_group.get("vip", 0) + summary.scheduled_by_group.get("all", 0) == summary.scheduled_signals
         assert match_count == summary.parsed_matches
@@ -86,7 +93,7 @@ async def test_excel_import_creates_signals_and_delivers_trial_messages() -> Non
         assert len(deliveries) == 3
         assert all(delivery.status == "sent" for delivery in deliveries)
         assert sent_signals == 3
-        assert ready_signals == 13
+        assert ready_signals == 17
         assert access.free_signals_remaining == 0
         assert all("СИГНАЛ" in message for _, message in bot.messages)
 

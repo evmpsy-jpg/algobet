@@ -173,10 +173,26 @@ async def import_parse_result(
             await auto_set_signal_result(session, signal, existing)
 
         if decision.suitable:
-            group = str((decision.payload or {}).get("signal_group") or "unknown").strip().lower()
-            scheduled_by_group[group if group in {"vip", "all"} else "unknown"] += 1
             lead_minutes = int(get_signal_rules()["signal"].get("lead_minutes", settings.signal_lead_minutes))
             send_at = to_utc_naive(parsed.match_start_at) - timedelta(minutes=lead_minutes)
+            now_utc = datetime.utcnow()
+
+            if signal is not None and signal.status == "sent":
+                continue
+
+            if send_at <= now_utc:
+                reason = "Время отправки сигнала уже прошло"
+                rejection_reasons[reason] += 1
+                if signal is not None and signal.status != "sent":
+                    signal.status = "cancelled"
+                    signal.cancel_reason = reason
+                    signal.source_import_id = batch.id
+                    signal.recalculated_at = now_utc
+                    cancelled += 1
+                continue
+
+            group = str((decision.payload or {}).get("signal_group") or "unknown").strip().lower()
+            scheduled_by_group[group if group in {"vip", "all"} else "unknown"] += 1
             if signal is None:
                 signal = ScheduledSignal(match_id=existing.id, send_at=send_at)
                 session.add(signal)
@@ -187,7 +203,7 @@ async def import_parse_result(
             signal.message_text = build_signal_message(parsed, decision)
             signal.source_import_id = batch.id
             signal.cancel_reason = None
-            signal.recalculated_at = datetime.utcnow()
+            signal.recalculated_at = now_utc
             scheduled += 1
         elif signal is not None and signal.status != "sent":
             rejection_reasons[decision.reason or "Матч не соответствует условиям"] += 1
