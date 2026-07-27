@@ -139,6 +139,16 @@ def calculate_signal_columns(data: dict[str, Any]) -> None:
 
     CV = E*100
     CW = F*100
+    DG = sum((
+        _yes(I>0.1), _yes(BA<0.66), _yes(DP>0.5), _yes(AG<7.5),
+        _yes(E>0.6), _yes(AI<-2), _yes(AK>1), _yes(EF>1),
+        _yes(AP>0), _yes(AX-AY>0.8),
+    ))
+    DH = sum((
+        _yes(I<-0.1), _yes(AZ<0.66), _yes(DP<-0.5), _yes(AH<7.5),
+        _yes(F>0.6), _yes(AI>2), _yes(AR>0), _yes(EF<-1),
+        _yes(AL>1), _yes(AY-AX>0.8),
+    ))
     EG = sum((_yes(EF>2), _yes(CP>4), _yes(E>0.65), _yes(DP>0.7), _yes(Q>6)))
     EH = sum((_yes(EF<-2), _yes(CP>4), _yes(F>0.65), _yes(DP<-0.7), _yes(X>6)))
 
@@ -152,6 +162,6 @@ def calculate_signal_columns(data: dict[str, Any]) -> None:
         "BJ": BJ, "BK": BK, "BL": BL, "BM": BM, "BP": BP, "BU": BU,
         "BV": BV, "BY": BY, "BZ": BZ, "CA": CA, "CB": CB, "CC": CC,
         "CD": CD, "CO": CO, "CP": CP, "CQ": CQ, "DA": DA, "DP": DP,
-        "DS": DS, "DV": DV, "DY": DY, "EF": EF, "CS": CS, "CT": CT,
+        "DS": DS, "DV": DV, "DY": DY, "EF": EF, "DG": DG, "DH": DH, "CS": CS, "CT": CT,
         "CV": CV, "CW": CW, "EG": EG, "EH": EH, "EI": EG-EH,
     })

@@ -15,6 +15,8 @@ DEFAULT_MAPPING: dict[str, str] = {
     "bf_p2": "BF",
     "probability_p1": "CV",
     "probability_p2": "CW",
+    "all_signal_p1": "DG",
+    "all_signal_p2": "DH",
     "p1_exact": "EG",
     "p2_exact": "EH",
     "p1_range": "CS",
