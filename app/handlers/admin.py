@@ -36,7 +36,7 @@ from app.services.match_analysis import format_analysis_status_user_text
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
-from app.services.signal_results import LEVEL_ORDER, auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, summarize_results
+from app.services.signal_results import SIGNAL_GROUP_ORDER, auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, signal_group_title, summarize_results
 from app.services.sqlite_backup import create_sqlite_backup, latest_sqlite_backup, sqlite_database_path
 from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price, format_subscription_activation_user_text
 
@@ -329,9 +329,9 @@ def format_latest_import_text(
     return "\n".join(lines)
 
 
-def _format_level_result_line(level: str, counter) -> str:
+def _format_group_result_line(group: str, counter) -> str:
     return (
-        f"{level}: ✅ {counter.won} / ❌ {counter.lost} / "
+        f"{signal_group_title(group)}: ✅ {counter.won} / ❌ {counter.lost} / "
         f"↩️ {counter.void} / ❔ {counter.unknown} · WR {format_winrate(counter.winrate)}"
     )
 
@@ -1216,14 +1216,13 @@ async def admin_statistics(message: Message) -> None:
 
     sent_total = counts.get("sent", 0)
     result_summary = summarize_results(result_rows, total_sent=sent_total)
-    level_lines = []
-    for level in LEVEL_ORDER:
-        if level in result_summary.by_level:
-            level_lines.append(_format_level_result_line(level, result_summary.by_level[level]))
-    for level in sorted(set(result_summary.by_level) - set(LEVEL_ORDER)):
-        level_lines.append(_format_level_result_line(level, result_summary.by_level[level]))
-    level_text = "\n".join(level_lines) if level_lines else "пока нет зафиксированных результатов"
-
+    group_lines = []
+    for group in SIGNAL_GROUP_ORDER:
+        if group in result_summary.by_group:
+            group_lines.append(_format_group_result_line(group, result_summary.by_group[group]))
+    for group in sorted(set(result_summary.by_group) - set(SIGNAL_GROUP_ORDER)):
+        group_lines.append(_format_group_result_line(group, result_summary.by_group[group]))
+    group_text = "\n".join(group_lines) if group_lines else "пока нет зафиксированных результатов"
     await message.answer(
         "📈 Статистика\n\n"
         f"Сегодня импортов: {imports}\nАктивных пользователей: {users}\n"
@@ -1238,7 +1237,7 @@ async def admin_statistics(message: Message) -> None:
         f"Оценено: {result_summary.evaluated} из {result_summary.total_sent}\n"
         f"Без результата: {result_summary.unrated_sent}\n"
         f"Процент захода: {format_winrate(result_summary.overall.winrate)}\n\n"
-        f"По уровням:\n{level_text}\n\n"
+        f"По типам сигналов:\n{group_text}\n\n"
         f"Следующий сигнал: {next_text}"
     )
 

@@ -300,7 +300,7 @@ def test_render_quality_html_shows_signal_result_statistics() -> None:
             ),
             QualityStatsItem(
                 key="all",
-                title="ALL",
+                title="Все сигналы",
                 sent_total=2,
                 counter=ResultCounter(lost=1),
             ),
@@ -330,9 +330,11 @@ def test_render_quality_html_shows_signal_result_statistics() -> None:
     assert "проверено 5" in html
     assert "обновлено 2" in html
     assert "50.0%" in html
+    assert "По типам сигналов" in html
     assert "VIP" in html
-    assert "ALL" in html
-    assert "TOP" in html
+    assert "Все сигналы" in html
+    assert "По уровням" not in html
+    assert "TOP" not in html
     assert "/quality" in html
 
 

@@ -63,13 +63,13 @@ async def test_set_signal_result_creates_and_updates_result() -> None:
     await engine.dispose()
 
 
-def test_summarize_results_counts_overall_and_by_level() -> None:
+def test_summarize_results_counts_overall_by_group_and_by_level() -> None:
     summary = summarize_results(
         [
-            ({"level": "TOP"}, "won"),
-            ({"level": "TOP"}, "lost"),
-            ({"level": "STRONG"}, "won"),
-            ({"level": "STANDARD"}, "void"),
+            ({"signal_group": "vip", "level": "TOP"}, "won"),
+            ({"signal_group": "vip", "level": "TOP"}, "lost"),
+            ({"signal_group": "all", "level": "STRONG"}, "won"),
+            ({"signal_group": "all", "level": "STANDARD"}, "void"),
             ({"level": "STANDARD"}, None),
         ],
         total_sent=5,
@@ -83,6 +83,11 @@ def test_summarize_results_counts_overall_and_by_level() -> None:
     assert summary.overall.void == 1
     assert summary.overall.unknown == 1
     assert format_winrate(summary.overall.winrate) == "66.7%"
+    assert summary.by_group["vip"].won == 1
+    assert summary.by_group["vip"].lost == 1
+    assert summary.by_group["all"].won == 1
+    assert summary.by_group["all"].void == 1
+    assert summary.by_group["unknown"].unknown == 1
     assert summary.by_level["TOP"].won == 1
     assert summary.by_level["TOP"].lost == 1
     assert format_winrate(summary.by_level["TOP"].winrate) == "50.0%"

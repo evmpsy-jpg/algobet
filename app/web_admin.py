@@ -1060,8 +1060,7 @@ def render_quality_html(summary: QualitySummary, *, token: str = "", auto_result
       <div class="actions"><form method="post" action="/quality/auto-update"><button class="action-button" type="submit">Обновить результаты по счету</button></form></div>
       {auto_message}
     </section>
-    {_quality_table('По группам', summary.by_group)}
-    {_quality_table('По уровням', summary.by_level)}
+    {_quality_table('По типам сигналов', summary.by_group)}
     """
     return _base_html("Статистика", body, token=token)
 

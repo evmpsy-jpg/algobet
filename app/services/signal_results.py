@@ -24,6 +24,7 @@ RESULT_SHORT_LABELS = {
     "unknown": "❔",
 }
 LEVEL_ORDER = ("TOP", "STRONG", "STANDARD")
+SIGNAL_GROUP_ORDER = ("vip", "all", "unknown")
 SCORE_PAIR_RE = re.compile(r"(\d+)\s*[:\-–—]\s*(\d+)")
 
 
@@ -73,6 +74,7 @@ class AutoResultSummary:
 class ResultSummary:
     total_sent: int = 0
     overall: ResultCounter = field(default_factory=ResultCounter)
+    by_group: dict[str, ResultCounter] = field(default_factory=dict)
     by_level: dict[str, ResultCounter] = field(default_factory=dict)
 
     @property
@@ -229,6 +231,21 @@ async def set_signal_result(
     return result
 
 
+def signal_group_key(payload: dict[str, Any] | None) -> str:
+    if not isinstance(payload, dict):
+        return "unknown"
+    group = str(payload.get("signal_group") or "unknown").strip().lower()
+    return group if group in {"vip", "all"} else "unknown"
+
+
+def signal_group_title(group: str) -> str:
+    return {
+        "vip": "VIP",
+        "all": "Все сигналы",
+        "unknown": "Без типа",
+    }.get(group.lower(), group.upper())
+
+
 def summarize_results(rows: list[tuple[dict[str, Any] | None, str | None]], total_sent: int = 0) -> ResultSummary:
     summary = ResultSummary(total_sent=total_sent)
     for payload, status in rows:
@@ -236,7 +253,11 @@ def summarize_results(rows: list[tuple[dict[str, Any] | None, str | None]], tota
         level = "—"
         if isinstance(payload, dict):
             level = str(payload.get("level") or "—")
+        group = signal_group_key(payload)
         summary.overall.add(normalized_status)
+        if group not in summary.by_group:
+            summary.by_group[group] = ResultCounter()
+        summary.by_group[group].add(normalized_status)
         if level not in summary.by_level:
             summary.by_level[level] = ResultCounter()
         summary.by_level[level].add(normalized_status)

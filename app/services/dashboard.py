@@ -471,7 +471,7 @@ def _payload_value(payload: dict[str, Any] | None, key: str, default: str = 'unk
 def _group_title(key: str) -> str:
     return {
         'vip': 'VIP',
-        'all': 'ALL',
+        'all': 'Все сигналы',
         'unknown': '\u0411\u0435\u0437 \u0442\u0438\u043f\u0430',
     }.get(key.lower(), key.upper())
 
