@@ -118,6 +118,11 @@ def test_infer_signal_result_status_from_match_score() -> None:
     assert infer_signal_result_status("-:-", 1) is None
     assert infer_signal_result_status(None, 1) is None
     assert infer_signal_result_status("11:11", 1) == "void"
+    assert infer_signal_result_status("3", 1) == "won"
+    assert infer_signal_result_status("3", 2) == "lost"
+    assert infer_signal_result_status("-2", 1) == "lost"
+    assert infer_signal_result_status("-2", 2) == "won"
+    assert infer_signal_result_status("0", 1) == "void"
 
 
 @pytest.mark.asyncio
