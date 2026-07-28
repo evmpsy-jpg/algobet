@@ -15,7 +15,7 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
     )
     timezone: str = Field(default="Europe/Moscow", alias="TIMEZONE")
-    signal_lead_minutes: int = Field(default=20, alias="SIGNAL_LEAD_MINUTES")
+    signal_lead_minutes: int = Field(default=10, alias="SIGNAL_LEAD_MINUTES")
     scheduler_interval_seconds: int = Field(default=30, alias="SCHEDULER_INTERVAL_SECONDS")
     max_upload_mb: int = Field(default=25, alias="MAX_UPLOAD_MB")
     sqlite_backup_enabled: bool = Field(default=True, alias="SQLITE_BACKUP_ENABLED")

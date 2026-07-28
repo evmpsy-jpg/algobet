@@ -297,7 +297,7 @@ async def test_schedule_problem_filter_and_import_warnings() -> None:
             ScheduledSignal(
                 match_id=ok_match.id,
                 status="scheduled",
-                send_at=datetime(2030, 7, 24, 12, 10),
+                send_at=datetime(2030, 7, 24, 12, 20),
                 signal_payload={"signal_group": "vip"},
                 source_import_id=batch.id,
             ),
@@ -344,7 +344,7 @@ async def test_schedule_problem_filter_and_import_warnings() -> None:
 
     assert len(all_signals) == 2
     assert [item.player_1 for item in problem_signals] == ["Bad Player"]
-    assert problem_signals[0].schedule_warning == "ожидалось 20 мин"
+    assert problem_signals[0].schedule_warning == "ожидалось 10 мин"
     assert [item.player_1 for item in import_warnings] == ["Bad Player"]
     assert import_detail is not None
     assert import_detail.batch.file_name == "schedule.xlsx"

@@ -2,7 +2,7 @@ algorithm:
   version: "v1.0"
 
 signal:
-  lead_minutes: 20
+  lead_minutes: 10
   min_h2h_games: 5
   min_favorite_form: 7
   min_bg_p1: 1.3
