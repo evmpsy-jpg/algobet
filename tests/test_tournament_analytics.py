@@ -107,7 +107,7 @@ def test_format_tournament_analytics_shows_all_provided_signals() -> None:
 
     assert text.count("STANDARD · П2") == 7
 
-def test_filter_accessible_signal_rows_respects_subscription_probability() -> None:
+def test_filter_accessible_signal_rows_respects_subscription_groups() -> None:
     user = User(id=1, telegram_id=1001)
     access = UserAccess(
         user_id=1,

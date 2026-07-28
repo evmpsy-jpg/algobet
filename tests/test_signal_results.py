@@ -89,9 +89,9 @@ def test_summarize_results_counts_overall_by_group_and_by_level() -> None:
     assert summary.by_group["all"].void == 1
     assert summary.by_group["unknown"].unknown == 1
     assert summary.by_tariff["vip_99"].won == 1
+    assert summary.by_tariff["vip_99"].lost == 1
     assert summary.by_tariff["all_95"].won == 1
-    assert summary.by_tariff["all_95"].lost == 1
-    assert summary.by_tariff["below_95"].void == 1
+    assert summary.by_tariff["all_95"].void == 1
     assert summary.by_tariff["unknown"].unknown == 1
     assert summary.by_level["TOP"].won == 1
     assert summary.by_level["TOP"].lost == 1

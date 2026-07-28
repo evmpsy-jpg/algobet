@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import SubscriptionRequest, User, UserAccess
-from app.services.signal_tariffs import ALL_SIGNALS_PROBABILITY_MIN, VIP_PROBABILITY_MIN, signal_probability
+from app.services.signal_tariffs import signal_group, signal_probability
 from app.services.subscriptions import SubscriptionPlan
 
 TRIAL_SIGNALS_LIMIT = 3
@@ -48,12 +48,18 @@ def subscription_allows_signal(access: UserAccess, signal_payload: dict | None) 
     if not any([access.includes_vip, access.includes_all_signals, access.includes_analytics]):
         return True
 
+    group = signal_group(signal_payload)
+    if group == "vip":
+        return bool(access.includes_vip)
+    if group == "all":
+        return bool(access.includes_all_signals)
+
     probability = signal_probability(signal_payload)
     if probability is None:
         return False
-    if access.includes_all_signals and probability >= ALL_SIGNALS_PROBABILITY_MIN:
+    if access.includes_vip and probability >= 99:
         return True
-    if access.includes_vip and probability >= VIP_PROBABILITY_MIN:
+    if access.includes_all_signals and probability >= 95:
         return True
     return False
 

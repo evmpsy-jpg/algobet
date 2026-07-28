@@ -5,7 +5,7 @@ from typing import Any
 VIP_PROBABILITY_MIN = 99
 ALL_SIGNALS_PROBABILITY_MIN = 95
 
-SIGNAL_TARIFF_ORDER = ("vip_99", "all_95", "below_95", "unknown")
+SIGNAL_TARIFF_ORDER = ("vip_99", "all_95", "unknown")
 
 
 def signal_probability(signal_payload: dict[str, Any] | None) -> float | None:
@@ -20,21 +20,28 @@ def signal_probability(signal_payload: dict[str, Any] | None) -> float | None:
         return None
 
 
+def signal_group(signal_payload: dict[str, Any] | None) -> str | None:
+    if not isinstance(signal_payload, dict):
+        return None
+    value = signal_payload.get("signal_group")
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"vip", "all"} else None
+
+
 def signal_tariff_key(signal_payload: dict[str, Any] | None) -> str:
-    probability = signal_probability(signal_payload)
-    if probability is None:
-        return "unknown"
-    if probability >= VIP_PROBABILITY_MIN:
+    group = signal_group(signal_payload)
+    if group == "vip":
         return "vip_99"
-    if probability >= ALL_SIGNALS_PROBABILITY_MIN:
+    if group == "all":
         return "all_95"
-    return "below_95"
+    return "unknown"
 
 
 def signal_tariff_title(key: str) -> str:
     return {
         "vip_99": "VIP 99%",
-        "all_95": "Все сигналы 95%",
-        "below_95": "Ниже 95%",
-        "unknown": "Без вероятности",
+        "all_95": "Все остальные сигналы",
+        "unknown": "Без типа",
     }.get(key.lower(), key.upper())

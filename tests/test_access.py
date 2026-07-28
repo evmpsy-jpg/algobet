@@ -81,7 +81,7 @@ def test_admin_user_has_access_without_access_row() -> None:
     assert has_signal_access(user, None, admin_ids=[444]) is True
 
 @pytest.mark.asyncio
-async def test_subscription_access_filters_vip_and_all_signals_by_probability() -> None:
+async def test_subscription_access_filters_vip_and_all_signal_groups() -> None:
     engine, factory = await make_session()
     async with factory() as session:
         user = User(telegram_id=555, username=None, first_name="VIP", last_name=None)
@@ -101,8 +101,8 @@ async def test_subscription_access_filters_vip_and_all_signals_by_probability() 
 
         access = await grant_subscription_access(session, user, request)
 
-        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "vip", "probability": 80}) is False
-        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "all", "probability": 99}) is True
+        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "vip", "probability": 80}) is True
+        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "all", "probability": 99}) is False
         assert has_signal_access(user, access, admin_ids=[], signal_payload={"probability": 99}) is True
         assert has_signal_access(user, access, admin_ids=[], signal_payload={"probability": 98}) is False
 
@@ -113,8 +113,8 @@ async def test_subscription_access_filters_vip_and_all_signals_by_probability() 
         request.includes_all_signals = True
         access = await grant_subscription_access(session, user, request)
 
-        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "all", "probability": 80}) is False
-        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "vip", "probability": 96}) is True
+        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "all", "probability": 80}) is True
+        assert has_signal_access(user, access, admin_ids=[], signal_payload={"signal_group": "vip", "probability": 96}) is False
         assert has_signal_access(user, access, admin_ids=[], signal_payload={"probability": 95}) is True
         assert has_signal_access(user, access, admin_ids=[], signal_payload={"probability": 94}) is False
     await engine.dispose()
