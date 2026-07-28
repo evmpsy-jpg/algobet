@@ -344,8 +344,13 @@ def test_format_admin_statistics_text_explains_stats_scope() -> None:
         result_summary=result_summary,
         tariff_text="VIP: ✅ 1 / ❌ 0",
         next_text="нет",
+        stats_correction={"won": 1, "lost": 1, "void": 0, "unknown": 0},
     )
 
+    assert "Сигналов с результатом: 0" in text
+    assert "Всего в выборке: 1" in text
+    assert "❌ Не зашло: 0" in text
+    assert "Корректировка: исключено 2" in text
     assert "Всего: 5" in text
     assert "Сигналов в статистике: 3" in text
     assert "Исключено из статистики: 2" in text

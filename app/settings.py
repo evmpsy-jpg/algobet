@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     google_sheets_sync_interval_minutes: int = Field(default=20, alias="GOOGLE_SHEETS_SYNC_INTERVAL_MINUTES")
     google_sheets_sync_schedule_minutes: str = Field(default="", alias="GOOGLE_SHEETS_SYNC_SCHEDULE_MINUTES")
     google_sheets_sync_max_rows: int = Field(default=1200, alias="GOOGLE_SHEETS_SYNC_MAX_ROWS")
+    stats_correction_won: int = Field(default=0, alias="STATS_CORRECTION_WON")
+    stats_correction_lost: int = Field(default=0, alias="STATS_CORRECTION_LOST")
+    stats_correction_void: int = Field(default=0, alias="STATS_CORRECTION_VOID")
+    stats_correction_unknown: int = Field(default=0, alias="STATS_CORRECTION_UNKNOWN")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

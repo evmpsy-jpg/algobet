@@ -1204,16 +1204,43 @@ def format_admin_statistics_text(
     result_summary,
     tariff_text: str,
     next_text: str,
+    stats_correction: dict[str, int] | None = None,
 ) -> str:
     total_signals = sum(signal_counts.values())
     stats_total = result_summary.total_sent
     excluded_from_stats = max(total_signals - stats_total, 0)
     delivered_messages = delivery_counts.get("sent", 0)
     failed_deliveries = delivery_counts.get("failed", 0)
+    correction = stats_correction or {}
+    correction_won = max(int(correction.get("won", 0)), 0)
+    correction_lost = max(int(correction.get("lost", 0)), 0)
+    correction_void = max(int(correction.get("void", 0)), 0)
+    correction_unknown = max(int(correction.get("unknown", 0)), 0)
+    correction_total = correction_won + correction_lost + correction_void + correction_unknown
+    official_won = max(result_summary.overall.won - correction_won, 0)
+    official_lost = max(result_summary.overall.lost - correction_lost, 0)
+    official_void = max(result_summary.overall.void - correction_void, 0)
+    official_unknown = max(result_summary.overall.unknown - correction_unknown, 0)
+    official_total = max(stats_total - correction_total, 0)
+    official_evaluated = official_won + official_lost + official_void + official_unknown
+    official_unrated = max(official_total - official_evaluated, 0)
+    official_winrate = None
+    if official_won + official_lost:
+        official_winrate = official_won / (official_won + official_lost) * 100
 
     return (
         "📈 Статистика\n\n"
         f"Сегодня импортов: {imports}\nАктивных пользователей: {users}\n\n"
+        "Официальная статистика:\n"
+        f"Сигналов с результатом: {official_evaluated}\n"
+        f"Всего в выборке: {official_total}\n"
+        f"✅ Зашло: {official_won}\n"
+        f"❌ Не зашло: {official_lost}\n"
+        f"↩️ Возврат: {official_void}\n"
+        f"❔ Неизвестно: {official_unknown}\n"
+        f"Без результата: {official_unrated}\n"
+        f"Процент захода: {format_winrate(official_winrate)}\n"
+        f"Корректировка: исключено {correction_total}\n\n"
         "Сигналы в базе:\n"
         f"Всего: {total_signals}\n"
         f"Запланировано: {signal_counts.get('scheduled', 0)}\n"
@@ -1228,7 +1255,7 @@ def format_admin_statistics_text(
         f"Уникальных сигналов доставлено: {delivered_signal_count}\n"
         f"Всего доставок: {delivered_messages}\n"
         f"Ошибок доставки: {failed_deliveries}\n\n"
-        "Результаты сигналов:\n"
+        "Технические результаты базы:\n"
         f"✅ Зашло: {result_summary.overall.won}\n"
         f"❌ Не зашло: {result_summary.overall.lost}\n"
         f"↩️ Возврат: {result_summary.overall.void}\n"
@@ -1290,6 +1317,12 @@ async def admin_statistics(message: Message) -> None:
         result_summary=result_summary,
         tariff_text=tariff_text,
         next_text=next_text,
+        stats_correction={
+            "won": settings.stats_correction_won,
+            "lost": settings.stats_correction_lost,
+            "void": settings.stats_correction_void,
+            "unknown": settings.stats_correction_unknown,
+        },
     ))
 
 def _user_name(user: User) -> str:
