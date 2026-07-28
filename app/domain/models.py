@@ -84,6 +84,7 @@ class Signal:
     player_1: str
     player_2: str
     selected_player: str
+    side: int
     probability: float | None
     favorite_form: float | None
     h2h_p1: float | None

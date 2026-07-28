@@ -32,6 +32,7 @@ def format_signal(signal: Signal) -> str:
     if not path.exists():
         raise FileNotFoundError("Не найден шаблон templates/signal.txt")
     template = path.read_text(encoding="utf-8")
+    signal_marker = "🔴" if signal.side == 2 else "🟢"
     values = {
         "title": signal.title,
         "lead_minutes": signal.lead_minutes,
@@ -39,6 +40,7 @@ def format_signal(signal: Signal) -> str:
         "match_time": signal.match_time,
         "player_1": signal.player_1,
         "player_2": signal.player_2,
+        "signal_marker": signal_marker,
         "probability": _fmt(signal.probability, 0),
         "favorite_form": _fmt(signal.favorite_form, 0),
         "selected_player": signal.selected_player,

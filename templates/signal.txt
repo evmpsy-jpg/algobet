@@ -10,10 +10,10 @@
 ⚔️
 {player_2}
 
-🟢 Вероятность: {probability}%
-🟢 Форма фаворита: {favorite_form}%
+{signal_marker} Вероятность: {probability}%
+{signal_marker} Форма фаворита: {favorite_form}%
 
-👉 Ставка:
+👉 Ставка на сет:
 {selected_player}
 
 ━━━━━━━━━━━━━━━━━━━━
