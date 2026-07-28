@@ -2,6 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
+COMPUTED_COLUMNS = (
+    "E", "F", "G", "I", "J", "K", "L", "S", "Z", "AG", "AH", "AI", "AJ",
+    "AK", "AL", "AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU",
+    "AV", "AW", "AX", "AY", "AZ", "BA", "BD", "BE", "BF", "BG", "BH",
+    "BI", "BJ", "BK", "BL", "BM", "BP", "BU", "BV", "BY", "BZ", "CA",
+    "CB", "CC", "CD", "CO", "CP", "CQ", "CS", "CT", "CV", "CW", "DA",
+    "DG", "DH", "DP", "DS", "DV", "DY", "EF", "EG", "EH", "EI",
+)
+
+INVALID_FORMULA_VALUES = {"", "#VALUE!", "#DIV/0!", "#N/A", "#REF!", "#NAME?", "#NUM!", "#NULL!"}
+
 
 def _n(data: dict[str, Any], key: str) -> float:
     value = data.get(key)
@@ -13,6 +24,14 @@ def _n(data: dict[str, Any], key: str) -> float:
         return float(str(value).replace(",", ".").strip())
     except ValueError:
         return 0.0
+
+
+def _has_source_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().upper() not in INVALID_FORMULA_VALUES
+    return True
 
 
 def _div(a: float, b: float) -> float:
@@ -28,8 +47,11 @@ def calculate_signal_columns(data: dict[str, Any]) -> None:
 
     В исходном XLSX формулы не имеют сохранённого кэша, поэтому openpyxl
     видит в data_only режиме None. Расчёты ниже повторяют формулы таблицы и
-    записывают результаты под буквенными ключами столбцов.
+    записывают результаты под буквенными ключами столбцов. Если таблица уже вернула
+    готовое значение формульной колонки, оно остается источником истины.
     """
+    source_values = {key: data[key] for key in COMPUTED_COLUMNS if _has_source_value(data.get(key))}
+
     M,N,O,P = (_n(data, c) for c in ("M","N","O","P"))
     Q,R = (_n(data, c) for c in ("Q","R"))
     T,U,V,W = (_n(data, c) for c in ("T","U","V","W"))
@@ -165,3 +187,4 @@ def calculate_signal_columns(data: dict[str, Any]) -> None:
         "DS": DS, "DV": DV, "DY": DY, "EF": EF, "DG": DG, "DH": DH, "CS": CS, "CT": CT,
         "CV": CV, "CW": CW, "EG": EG, "EH": EH, "EI": EG-EH,
     })
+    data.update(source_values)
