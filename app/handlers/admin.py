@@ -1194,12 +1194,57 @@ async def maintenance_backup_callback(callback: CallbackQuery) -> None:
     await show_maintenance(callback)
 
 
+def format_admin_statistics_text(
+    *,
+    imports: int,
+    users: int,
+    signal_counts: dict[str, int],
+    delivery_counts: dict[str, int],
+    delivered_signal_count: int,
+    result_summary,
+    tariff_text: str,
+    next_text: str,
+) -> str:
+    total_signals = sum(signal_counts.values())
+    stats_total = result_summary.total_sent
+    excluded_from_stats = max(total_signals - stats_total, 0)
+    delivered_messages = delivery_counts.get("sent", 0)
+    failed_deliveries = delivery_counts.get("failed", 0)
+
+    return (
+        "📈 Статистика\n\n"
+        f"Сегодня импортов: {imports}\nАктивных пользователей: {users}\n\n"
+        "Сигналы в базе:\n"
+        f"Всего: {total_signals}\n"
+        f"Запланировано: {signal_counts.get('scheduled', 0)}\n"
+        f"Готово: {signal_counts.get('ready', 0)}\n"
+        f"Отправлено: {signal_counts.get('sent', 0)}\n"
+        f"Отменено: {signal_counts.get('cancelled', 0)}\n\n"
+        "Выборка статистики:\n"
+        "Считаются только сигналы со статусом «отправлено».\n"
+        f"Сигналов в статистике: {stats_total}\n"
+        f"Исключено из статистики: {excluded_from_stats}\n\n"
+        "Доставки пользователям:\n"
+        f"Уникальных сигналов доставлено: {delivered_signal_count}\n"
+        f"Всего доставок: {delivered_messages}\n"
+        f"Ошибок доставки: {failed_deliveries}\n\n"
+        "Результаты сигналов:\n"
+        f"✅ Зашло: {result_summary.overall.won}\n"
+        f"❌ Не зашло: {result_summary.overall.lost}\n"
+        f"↩️ Возврат: {result_summary.overall.void}\n"
+        f"❔ Неизвестно: {result_summary.overall.unknown}\n"
+        f"Оценено: {result_summary.evaluated} из {result_summary.total_sent}\n"
+        f"Без результата: {result_summary.unrated_sent}\n"
+        f"Процент захода: {format_winrate(result_summary.overall.winrate)}\n\n"
+        f"По тарифам:\n{tariff_text}\n\n"
+        f"Следующий сигнал: {next_text}"
+    )
+
 @router.message(F.text == "📈 Статистика")
 async def admin_statistics(message: Message) -> None:
     if not is_admin(message):
         return
     settings = get_settings()
-    storage_text = "\n".join(storage_usage_lines(settings))
     today = datetime.now().date()
     start = datetime.combine(today, datetime.min.time())
     end = start + timedelta(days=1)
@@ -1208,9 +1253,14 @@ async def admin_statistics(message: Message) -> None:
         users = int(await session.scalar(select(func.count(User.id)).where(User.is_active.is_(True))) or 0)
         counts = dict((await session.execute(select(ScheduledSignal.status, func.count(ScheduledSignal.id)).group_by(ScheduledSignal.status))).all())
         delivery_counts = dict((await session.execute(select(SignalDelivery.status, func.count(SignalDelivery.id)).group_by(SignalDelivery.status))).all())
+        delivered_signal_count = int(await session.scalar(
+            select(func.count(func.distinct(SignalDelivery.signal_id)))
+            .where(SignalDelivery.status == "sent")
+        ) or 0)
         result_rows = list((await session.execute(
             select(ScheduledSignal.signal_payload, SignalResult.status)
             .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .where(ScheduledSignal.status == "sent")
         )).all())
         next_signal = (await session.execute(
             select(ScheduledSignal, Match).join(Match, Match.id == ScheduledSignal.match_id)
@@ -1231,23 +1281,16 @@ async def admin_statistics(message: Message) -> None:
     for tariff in sorted(set(result_summary.by_tariff) - set(SIGNAL_TARIFF_ORDER)):
         tariff_lines.append(_format_tariff_result_line(tariff, result_summary.by_tariff[tariff]))
     tariff_text = "\n".join(tariff_lines) if tariff_lines else "пока нет зафиксированных результатов"
-    await message.answer(
-        "📈 Статистика\n\n"
-        f"Сегодня импортов: {imports}\nАктивных пользователей: {users}\n"
-        f"Запланировано: {counts.get('scheduled', 0)}\nГотово: {counts.get('ready', 0)}\n"
-        f"Отправлено: {sent_total}\nОтменено: {counts.get('cancelled', 0)}\n"
-        f"Доставлено пользователям: {delivery_counts.get('sent', 0)}\nОшибок доставки: {delivery_counts.get('failed', 0)}\n\n"
-        "Результаты сигналов:\n"
-        f"✅ Зашло: {result_summary.overall.won}\n"
-        f"❌ Не зашло: {result_summary.overall.lost}\n"
-        f"↩️ Возврат: {result_summary.overall.void}\n"
-        f"❔ Неизвестно: {result_summary.overall.unknown}\n"
-        f"Оценено: {result_summary.evaluated} из {result_summary.total_sent}\n"
-        f"Без результата: {result_summary.unrated_sent}\n"
-        f"Процент захода: {format_winrate(result_summary.overall.winrate)}\n\n"
-        f"По тарифам:\n{tariff_text}\n\n"
-        f"Следующий сигнал: {next_text}"
-    )
+    await message.answer(format_admin_statistics_text(
+        imports=imports,
+        users=users,
+        signal_counts=counts,
+        delivery_counts=delivery_counts,
+        delivered_signal_count=delivered_signal_count,
+        result_summary=result_summary,
+        tariff_text=tariff_text,
+        next_text=next_text,
+    ))
 
 def _user_name(user: User) -> str:
     parts = [item for item in [user.first_name, user.last_name] if item]

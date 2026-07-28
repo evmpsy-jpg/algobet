@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base, ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalDelivery, SignalResult, User
-from app.handlers.admin import admin_settings_keyboard, format_admin_settings_text, directory_size_bytes, format_bytes, format_latest_import_text, format_schedule_warning_lines, format_sent_history_summary, format_signals_dashboard_text, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines, summarize_import_decision_logs
+from app.handlers.admin import admin_settings_keyboard, format_admin_settings_text, directory_size_bytes, format_bytes, format_latest_import_text, format_admin_statistics_text, format_schedule_warning_lines, format_sent_history_summary, format_signals_dashboard_text, format_signal_deliveries, get_signal_group_counts, remove_uploaded_file, result_filter_keyboard, signal_list_keyboard, signals_dashboard_keyboard, sqlite_database_path, storage_usage_lines, summarize_import_decision_logs
 
 
 def make_match() -> Match:
@@ -326,3 +326,28 @@ def test_format_admin_settings_text_uses_current_rule_levels() -> None:
     assert "Все сигналы от: 85%" in text
     assert "Карта анализа" in text
     assert "Карта подписки" in text
+
+def test_format_admin_statistics_text_explains_stats_scope() -> None:
+    result_summary = SimpleNamespace(
+        total_sent=3,
+        evaluated=2,
+        unrated_sent=1,
+        overall=SimpleNamespace(won=1, lost=1, void=0, unknown=0, winrate=50.0),
+    )
+
+    text = format_admin_statistics_text(
+        imports=2,
+        users=5,
+        signal_counts={"scheduled": 1, "ready": 0, "sent": 3, "cancelled": 1},
+        delivery_counts={"sent": 7, "failed": 2},
+        delivered_signal_count=2,
+        result_summary=result_summary,
+        tariff_text="VIP: ✅ 1 / ❌ 0",
+        next_text="нет",
+    )
+
+    assert "Всего: 5" in text
+    assert "Сигналов в статистике: 3" in text
+    assert "Исключено из статистики: 2" in text
+    assert "Уникальных сигналов доставлено: 2" in text
+    assert "Всего доставок: 7" in text
