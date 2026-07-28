@@ -1255,7 +1255,6 @@ def format_admin_statistics_text(
         f"Уникальных сигналов доставлено: {delivered_signal_count}\n"
         f"Всего доставок: {delivered_messages}\n"
         f"Ошибок доставки: {failed_deliveries}\n\n"
-        f"По тарифам:\n{tariff_text}\n\n"
         f"Следующий сигнал: {next_text}"
     )
 

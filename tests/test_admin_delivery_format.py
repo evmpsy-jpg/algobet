@@ -357,3 +357,4 @@ def test_format_admin_statistics_text_explains_stats_scope() -> None:
     assert "Уникальных сигналов доставлено: 2" in text
     assert "Всего доставок: 7" in text
     assert "Технические результаты базы" not in text
+    assert "По тарифам" not in text
