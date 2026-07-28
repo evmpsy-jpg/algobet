@@ -1060,7 +1060,7 @@ def render_quality_html(summary: QualitySummary, *, token: str = "", auto_result
       <div class="actions"><form method="post" action="/quality/auto-update"><button class="action-button" type="submit">Обновить результаты по счету</button></form></div>
       {auto_message}
     </section>
-    {_quality_table('По типам сигналов', summary.by_group)}
+    {_quality_table('По тарифам', summary.by_group)}
     """
     return _base_html("Статистика", body, token=token)
 
@@ -2588,5 +2588,3 @@ async def request_status_update(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
     return RedirectResponse(url=f"/requests/{kind}/{request_id}", status_code=status.HTTP_303_SEE_OTHER)
-
-

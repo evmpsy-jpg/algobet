@@ -36,7 +36,8 @@ from app.services.match_analysis import format_analysis_status_user_text
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
-from app.services.signal_results import SIGNAL_GROUP_ORDER, auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, signal_group_title, summarize_results
+from app.services.signal_results import auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, signal_group_title, summarize_results
+from app.services.signal_tariffs import SIGNAL_TARIFF_ORDER, signal_tariff_title
 from app.services.sqlite_backup import create_sqlite_backup, latest_sqlite_backup, sqlite_database_path
 from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price, format_subscription_activation_user_text
 
@@ -332,6 +333,13 @@ def format_latest_import_text(
 def _format_group_result_line(group: str, counter) -> str:
     return (
         f"{signal_group_title(group)}: ✅ {counter.won} / ❌ {counter.lost} / "
+        f"↩️ {counter.void} / ❔ {counter.unknown} · WR {format_winrate(counter.winrate)}"
+    )
+
+
+def _format_tariff_result_line(tariff: str, counter) -> str:
+    return (
+        f"{signal_tariff_title(tariff)}: ✅ {counter.won} / ❌ {counter.lost} / "
         f"↩️ {counter.void} / ❔ {counter.unknown} · WR {format_winrate(counter.winrate)}"
     )
 
@@ -1216,13 +1224,13 @@ async def admin_statistics(message: Message) -> None:
 
     sent_total = counts.get("sent", 0)
     result_summary = summarize_results(result_rows, total_sent=sent_total)
-    group_lines = []
-    for group in SIGNAL_GROUP_ORDER:
-        if group in result_summary.by_group:
-            group_lines.append(_format_group_result_line(group, result_summary.by_group[group]))
-    for group in sorted(set(result_summary.by_group) - set(SIGNAL_GROUP_ORDER)):
-        group_lines.append(_format_group_result_line(group, result_summary.by_group[group]))
-    group_text = "\n".join(group_lines) if group_lines else "пока нет зафиксированных результатов"
+    tariff_lines = []
+    for tariff in SIGNAL_TARIFF_ORDER:
+        if tariff in result_summary.by_tariff:
+            tariff_lines.append(_format_tariff_result_line(tariff, result_summary.by_tariff[tariff]))
+    for tariff in sorted(set(result_summary.by_tariff) - set(SIGNAL_TARIFF_ORDER)):
+        tariff_lines.append(_format_tariff_result_line(tariff, result_summary.by_tariff[tariff]))
+    tariff_text = "\n".join(tariff_lines) if tariff_lines else "пока нет зафиксированных результатов"
     await message.answer(
         "📈 Статистика\n\n"
         f"Сегодня импортов: {imports}\nАктивных пользователей: {users}\n"
@@ -1237,7 +1245,7 @@ async def admin_statistics(message: Message) -> None:
         f"Оценено: {result_summary.evaluated} из {result_summary.total_sent}\n"
         f"Без результата: {result_summary.unrated_sent}\n"
         f"Процент захода: {format_winrate(result_summary.overall.winrate)}\n\n"
-        f"По типам сигналов:\n{group_text}\n\n"
+        f"По тарифам:\n{tariff_text}\n\n"
         f"Следующий сигнал: {next_text}"
     )
 

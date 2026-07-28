@@ -96,7 +96,7 @@ async def test_collect_dashboard_summary_counts_core_entities() -> None:
             status="sent",
             send_at=datetime(2026, 7, 24, 12, 10),
             signal_type="SET_VIP_TOP",
-            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1},
+            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1, "probability": 99},
             message_text="signal",
             source_import_id=batch.id,
         )
@@ -391,7 +391,7 @@ async def test_collect_quality_summary_groups_sent_signal_results() -> None:
             status="sent",
             send_at=datetime(2026, 7, 24, 12, 10),
             signal_type="SET_VIP_TOP",
-            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1},
+            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1, "probability": 99},
             message_text="vip signal",
         )
         all_lost_signal = ScheduledSignal(
@@ -399,7 +399,7 @@ async def test_collect_quality_summary_groups_sent_signal_results() -> None:
             status="sent",
             send_at=datetime(2026, 7, 24, 12, 11),
             signal_type="SET_ALL_STANDARD",
-            signal_payload={"signal_group": "all", "level": "STANDARD", "side": 2},
+            signal_payload={"signal_group": "all", "level": "STANDARD", "side": 2, "probability": 95},
             message_text="all signal",
         )
         all_unrated_signal = ScheduledSignal(
@@ -407,7 +407,7 @@ async def test_collect_quality_summary_groups_sent_signal_results() -> None:
             status="sent",
             send_at=datetime(2026, 7, 24, 12, 12),
             signal_type="SET_ALL_TOP",
-            signal_payload={"signal_group": "all", "level": "TOP", "side": 1},
+            signal_payload={"signal_group": "all", "level": "TOP", "side": 1, "probability": 96},
             message_text="all unrated",
         )
         scheduled_signal = ScheduledSignal(
@@ -415,7 +415,7 @@ async def test_collect_quality_summary_groups_sent_signal_results() -> None:
             status="ready",
             send_at=datetime(2026, 7, 24, 12, 13),
             signal_type="SET_VIP_TOP",
-            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1},
+            signal_payload={"signal_group": "vip", "level": "TOP", "side": 1, "probability": 99},
             message_text="not sent",
         )
         session.add_all([vip_signal, all_lost_signal, all_unrated_signal, scheduled_signal])
@@ -435,7 +435,7 @@ async def test_collect_quality_summary_groups_sent_signal_results() -> None:
     assert summary.overall.evaluated == 2
     assert summary.overall.unrated_sent == 1
     assert summary.overall.counter.winrate == 50.0
-    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_group] == [("vip", 1, 1), ("all", 2, 1)]
+    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_group] == [("vip_99", 1, 1), ("all_95", 2, 1)]
     assert summary.by_group[0].counter.won == 1
     assert summary.by_group[1].counter.lost == 1
     assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_level] == [("TOP", 2, 1), ("STANDARD", 1, 1)]
@@ -533,4 +533,3 @@ def test_build_system_health_checks_flags_operational_problems(tmp_path) -> None
     assert by_title["Импорт"].status == "problem"
     assert by_title["Заявки"].status == "warning"
     assert by_title["Backup"].status == "warning"
-

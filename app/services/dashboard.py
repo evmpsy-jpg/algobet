@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.sqlite_backup import BackupInfo, latest_sqlite_backup, list_sqlite_backups, sqlite_database_path, verify_sqlite_backup
 from app.services.rules_config import get_signal_rules
 from app.services.signal_results import LEVEL_ORDER, ResultCounter, summarize_results
+from app.services.signal_tariffs import SIGNAL_TARIFF_ORDER, signal_tariff_key, signal_tariff_title
 from app.settings import get_settings
 from app.services.bot_settings import apply_system_runtime_settings, get_system_runtime_settings
 from app.database.models import (
@@ -513,15 +514,15 @@ async def collect_quality_summary(session: AsyncSession) -> QualitySummary:
     sent_groups: dict[str, int] = {}
     result_groups: dict[str, list[tuple[dict[str, Any] | None, str | None]]] = {}
     for payload in sent_payloads:
-        group = _payload_value(payload, 'signal_group').lower()
+        group = signal_tariff_key(payload)
         sent_groups[group] = sent_groups.get(group, 0) + 1
     for payload, result_status in result_rows:
-        group = _payload_value(payload, 'signal_group').lower()
+        group = signal_tariff_key(payload)
         result_groups.setdefault(group, []).append((payload, result_status))
 
-    group_order = ['vip', 'all'] + sorted(key for key in set(sent_groups) | set(result_groups) if key not in {'vip', 'all'})
+    group_order = list(SIGNAL_TARIFF_ORDER) + sorted(key for key in set(sent_groups) | set(result_groups) if key not in set(SIGNAL_TARIFF_ORDER))
     by_group = [
-        _make_quality_item(key, _group_title(key), sent_groups.get(key, 0), result_groups.get(key, []))
+        _make_quality_item(key, signal_tariff_title(key), sent_groups.get(key, 0), result_groups.get(key, []))
         for key in group_order
         if sent_groups.get(key, 0) or result_groups.get(key)
     ]
@@ -1280,4 +1281,3 @@ async def collect_request_detail(session: AsyncSession, kind: str, request_id: i
             updated_at=request.updated_at,
         )
     return None
-

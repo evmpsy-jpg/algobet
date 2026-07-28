@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Match, ScheduledSignal, SignalResult
+from app.services.signal_tariffs import signal_tariff_key
 
 RESULT_STATUSES = {"won", "lost", "void", "unknown"}
 RESULT_LABELS = {
@@ -75,6 +76,7 @@ class ResultSummary:
     total_sent: int = 0
     overall: ResultCounter = field(default_factory=ResultCounter)
     by_group: dict[str, ResultCounter] = field(default_factory=dict)
+    by_tariff: dict[str, ResultCounter] = field(default_factory=dict)
     by_level: dict[str, ResultCounter] = field(default_factory=dict)
 
     @property
@@ -254,10 +256,14 @@ def summarize_results(rows: list[tuple[dict[str, Any] | None, str | None]], tota
         if isinstance(payload, dict):
             level = str(payload.get("level") or "—")
         group = signal_group_key(payload)
+        tariff = signal_tariff_key(payload)
         summary.overall.add(normalized_status)
         if group not in summary.by_group:
             summary.by_group[group] = ResultCounter()
         summary.by_group[group].add(normalized_status)
+        if tariff not in summary.by_tariff:
+            summary.by_tariff[tariff] = ResultCounter()
+        summary.by_tariff[tariff].add(normalized_status)
         if level not in summary.by_level:
             summary.by_level[level] = ResultCounter()
         summary.by_level[level].add(normalized_status)

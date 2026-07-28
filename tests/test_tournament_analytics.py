@@ -107,7 +107,7 @@ def test_format_tournament_analytics_shows_all_provided_signals() -> None:
 
     assert text.count("STANDARD · П2") == 7
 
-def test_filter_accessible_signal_rows_respects_subscription_groups() -> None:
+def test_filter_accessible_signal_rows_respects_subscription_probability() -> None:
     user = User(id=1, telegram_id=1001)
     access = UserAccess(
         user_id=1,
@@ -118,8 +118,8 @@ def test_filter_accessible_signal_rows_respects_subscription_groups() -> None:
         includes_analytics=True,
         signals_remaining=10,
     )
-    vip_signal = ScheduledSignal(match_id=1, status="scheduled", send_at=datetime(2026, 7, 22, 8, 0), signal_payload={"signal_group": "vip"})
-    all_signal = ScheduledSignal(match_id=2, status="scheduled", send_at=datetime(2026, 7, 22, 8, 5), signal_payload={"signal_group": "all"})
+    vip_signal = ScheduledSignal(match_id=1, status="scheduled", send_at=datetime(2026, 7, 22, 8, 0), signal_payload={"signal_group": "vip", "probability": 99})
+    all_signal = ScheduledSignal(match_id=2, status="scheduled", send_at=datetime(2026, 7, 22, 8, 5), signal_payload={"signal_group": "all", "probability": 95})
     vip_match = make_match()
     all_match = make_match()
 

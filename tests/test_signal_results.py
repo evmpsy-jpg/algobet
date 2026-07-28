@@ -66,10 +66,10 @@ async def test_set_signal_result_creates_and_updates_result() -> None:
 def test_summarize_results_counts_overall_by_group_and_by_level() -> None:
     summary = summarize_results(
         [
-            ({"signal_group": "vip", "level": "TOP"}, "won"),
-            ({"signal_group": "vip", "level": "TOP"}, "lost"),
-            ({"signal_group": "all", "level": "STRONG"}, "won"),
-            ({"signal_group": "all", "level": "STANDARD"}, "void"),
+            ({"signal_group": "vip", "level": "TOP", "probability": 99}, "won"),
+            ({"signal_group": "vip", "level": "TOP", "probability": 98}, "lost"),
+            ({"signal_group": "all", "level": "STRONG", "probability": 95}, "won"),
+            ({"signal_group": "all", "level": "STANDARD", "probability": 80}, "void"),
             ({"level": "STANDARD"}, None),
         ],
         total_sent=5,
@@ -88,6 +88,11 @@ def test_summarize_results_counts_overall_by_group_and_by_level() -> None:
     assert summary.by_group["all"].won == 1
     assert summary.by_group["all"].void == 1
     assert summary.by_group["unknown"].unknown == 1
+    assert summary.by_tariff["vip_99"].won == 1
+    assert summary.by_tariff["all_95"].won == 1
+    assert summary.by_tariff["all_95"].lost == 1
+    assert summary.by_tariff["below_95"].void == 1
+    assert summary.by_tariff["unknown"].unknown == 1
     assert summary.by_level["TOP"].won == 1
     assert summary.by_level["TOP"].lost == 1
     assert format_winrate(summary.by_level["TOP"].winrate) == "50.0%"
