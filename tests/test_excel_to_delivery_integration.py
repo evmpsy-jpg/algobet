@@ -88,12 +88,12 @@ async def test_excel_import_creates_signals_and_delivers_trial_messages(monkeypa
         ready_signals = int(await session.scalar(select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "ready")) or 0)
 
         assert sender_summary.processed_signals == summary.scheduled_signals
-        assert sender_summary.sent_deliveries == 3
-        assert len(bot.messages) == 3
-        assert len(deliveries) == 3
+        assert sender_summary.sent_deliveries == 9
+        assert len(bot.messages) == 9
+        assert len(deliveries) == 9
         assert all(delivery.status == "sent" for delivery in deliveries)
-        assert sent_signals == 3
-        assert ready_signals == 33
+        assert sent_signals == 9
+        assert ready_signals == 27
         assert access.free_signals_remaining == 0
         assert all("СИГНАЛ" in message for _, message in bot.messages)
 

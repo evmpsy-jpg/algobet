@@ -4,7 +4,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="📊 Аналитика турниров")],
-        [KeyboardButton(text="🎁 Первые 3 сигнала"), KeyboardButton(text="💳 Подписка")],
+        [KeyboardButton(text="🎁 Первые 9 сигналов"), KeyboardButton(text="💳 Подписка")],
         [KeyboardButton(text="📚 Полезная информация"), KeyboardButton(text="🏆 Результаты")],
         [KeyboardButton(text="🔎 Анализ матча"), KeyboardButton(text="🧮 Калькулятор")],
     ]

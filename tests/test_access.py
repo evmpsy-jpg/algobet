@@ -37,7 +37,7 @@ async def test_grant_trial_access_resets_free_signal_limit() -> None:
 
         assert access.access_type == "trial"
         assert access.status == "active"
-        assert access.free_signals_remaining == 3
+        assert access.free_signals_remaining == 9
         assert has_signal_access(user, access, admin_ids=[]) is True
     await engine.dispose()
 

@@ -8,7 +8,7 @@ def test_format_help_information_mentions_core_user_sections_and_risk() -> None:
     assert "📊 Аналитика турниров" in text
     assert "💳 Подписка" in text
     assert "🏆 Результаты" in text
-    assert "🎁 Первые 3 сигнала" in text
+    assert "🎁 Первые 9 сигналов" in text
     assert "не являются гарантией" in text
 
 

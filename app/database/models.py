@@ -46,7 +46,7 @@ class UserAccess(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     access_type: Mapped[str] = mapped_column(String(30), default="trial", index=True)
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
-    free_signals_remaining: Mapped[int] = mapped_column(Integer, default=3)
+    free_signals_remaining: Mapped[int] = mapped_column(Integer, default=9)
     signals_remaining: Mapped[int | None] = mapped_column(Integer)
     plan_id: Mapped[str | None] = mapped_column(String(50), index=True)
     plan_group: Mapped[str | None] = mapped_column(String(30), index=True)

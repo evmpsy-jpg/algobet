@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta
+from datetime import datetime, timedelta
 
 from app.database.models import User, UserAccess
 from app.handlers.user import format_subscription_status
@@ -12,7 +12,7 @@ def test_format_subscription_status_without_access_suggests_trial() -> None:
     text = format_subscription_status(None, None)
 
     assert "Активного доступа пока нет" in text
-    assert "Первые 3 сигнала" in text
+    assert "Первые 9 сигналов" in text
 
 
 def test_format_subscription_status_shows_trial_remaining() -> None:

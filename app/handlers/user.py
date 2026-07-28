@@ -89,7 +89,7 @@ async def back_to_menu(message: Message) -> None:
 
 
 
-@router.message(F.text == "🎁 Первые 3 сигнала")
+@router.message(F.text == "🎁 Первые 9 сигналов")
 async def trial_signals_handler(message: Message) -> None:
     if message.from_user is None:
         return
@@ -209,7 +209,7 @@ def format_subscription_status(user: User | None, access: UserAccess | None, *, 
     if user is None or access is None:
         lines.extend([
             "Активного доступа пока нет.",
-            "Нажмите 🎁 Первые 3 сигнала, чтобы активировать пробный доступ.",
+            "Нажмите 🎁 Первые 9 сигналов, чтобы активировать пробный доступ.",
         ])
         return "\n".join(lines)
 
@@ -453,7 +453,7 @@ def format_help_information() -> str:
         "• 📊 Аналитика турниров — свежая загрузка и доступные сигналы на сегодня;",
         "• 💳 Подписка — ваш текущий доступ;",
         "• 🏆 Результаты — последние оцененные сигналы и winrate;",
-        "• 🎁 Первые 3 сигнала — активация пробного доступа.",
+        "• 🎁 Первые 9 сигналов — активация пробного доступа.",
         "",
         "Важно: сигналы не являются гарантией результата. Используйте их как аналитическую подсказку и контролируйте риск.",
     ])

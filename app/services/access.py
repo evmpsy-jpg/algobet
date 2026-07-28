@@ -9,7 +9,7 @@ from app.database.models import SubscriptionRequest, User, UserAccess
 from app.services.signal_tariffs import signal_group, signal_probability
 from app.services.subscriptions import SubscriptionPlan
 
-TRIAL_SIGNALS_LIMIT = 3
+TRIAL_SIGNALS_LIMIT = 9
 
 
 async def ensure_trial_access(session: AsyncSession, user: User) -> UserAccess:

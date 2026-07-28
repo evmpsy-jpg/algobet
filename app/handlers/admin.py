@@ -1717,7 +1717,7 @@ def users_list_keyboard(items: list[tuple[User, UserAccess | None]], page: int, 
 
 def user_detail_keyboard(user_id: int, page: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 Выдать trial 3", callback_data=f"usr:trial:{user_id}:{page}")],
+        [InlineKeyboardButton(text="🎁 Выдать trial 9", callback_data=f"usr:trial:{user_id}:{page}")],
         [InlineKeyboardButton(text="💳 Выдать paid", callback_data=f"usr:paid:{user_id}:{page}")],
         [
             InlineKeyboardButton(text="💳 Заявки подписки", callback_data=f"usr:subreq:{user_id}:{page}"),
