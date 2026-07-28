@@ -294,6 +294,12 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         else match.probability_p2
     )
 
+
+    favorite_form = (
+        match.favorite_form_p1
+        if side == 1
+        else match.favorite_form_p2
+    )
     selected_player = (
         match.player_1
         if side == 1
@@ -392,6 +398,7 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         "selected_player": selected_player,
         "confidence": probability,
         "probability": probability,
+        "favorite_form": favorite_form,
         "level": level,
         "signal_group": signal_group,
         "title": title,

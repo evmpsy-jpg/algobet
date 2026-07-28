@@ -19,6 +19,7 @@ def test_stage5_signal_contains_set_handicaps():
         player_2="Игрок 2",
         h2h_games=10,
         form_p1=8,
+        favorite_form_p1=89,
         bg_p1=1.5,
         probability_p1=92,
         all_signal_p1=8,
@@ -34,7 +35,9 @@ def test_stage5_signal_contains_set_handicaps():
     decision = evaluate_match(match)
     assert decision.suitable
     assert decision.level == "TOP"
+    assert decision.payload["favorite_form"] == 89
     text = format_signal(build_signal(match, decision))
+    assert "🟢 Форма фаворита: 89%" in text
     assert "1️⃣ Сет: +1.8" in text
     assert "2️⃣ Сет: -2.4" in text or "2️⃣ Сет: −2.4" in text
     assert "3️⃣ Сет: 0" in text

@@ -21,6 +21,7 @@ def build_signal(match: MatchData, decision: SignalDecision) -> Signal:
         player_2=match.player_2,
         selected_player=decision.selected_player,
         probability=decision.probability,
+        favorite_form=payload.get("favorite_form"),
         h2h_p1=match.h2h_p1,
         h2h_p2=match.h2h_p2,
         average_h2h_handicap=match.average_h2h_handicap,

@@ -23,6 +23,8 @@ class MatchData:
     h2h_games: float | None = None
     form_p1: float | None = None
     form_p2: float | None = None
+    favorite_form_p1: float | None = None
+    favorite_form_p2: float | None = None
     bg_p1: float | None = None
     bf_p2: float | None = None
     probability_p1: float | None = None
@@ -83,6 +85,7 @@ class Signal:
     player_2: str
     selected_player: str
     probability: float | None
+    favorite_form: float | None
     h2h_p1: float | None
     h2h_p2: float | None
     average_h2h_handicap: float | None

@@ -11,6 +11,8 @@ DEFAULT_MAPPING: dict[str, str] = {
     "h2h_games": "CP",
     "form_p1": "Q",
     "form_p2": "X",
+    "favorite_form_p1": "EJ",
+    "favorite_form_p2": "EK",
     "bg_p1": "BG",
     "bf_p2": "BF",
     "probability_p1": "CV",

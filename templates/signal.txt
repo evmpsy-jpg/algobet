@@ -11,6 +11,7 @@
 {player_2}
 
 🟢 Вероятность: {probability}%
+🟢 Форма фаворита: {favorite_form}%
 
 👉 Ставка:
 {selected_player}

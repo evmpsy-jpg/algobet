@@ -42,6 +42,8 @@ def normalize_match(parsed: ParsedMatch) -> MatchData:
         h2h_games=get("h2h_games"),
         form_p1=get("form_p1"),
         form_p2=get("form_p2"),
+        favorite_form_p1=get("favorite_form_p1"),
+        favorite_form_p2=get("favorite_form_p2"),
         bg_p1=get("bg_p1"),
         bf_p2=get("bf_p2"),
         probability_p1=get("probability_p1"),

@@ -40,6 +40,7 @@ def format_signal(signal: Signal) -> str:
         "player_1": signal.player_1,
         "player_2": signal.player_2,
         "probability": _fmt(signal.probability, 0),
+        "favorite_form": _fmt(signal.favorite_form, 0),
         "selected_player": signal.selected_player,
         "set1_handicap": _fmt(signal.set1_handicap, 1, True),
         "set2_handicap": _fmt(signal.set2_handicap, 1, True),
