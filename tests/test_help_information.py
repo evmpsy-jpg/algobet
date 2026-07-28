@@ -1,4 +1,4 @@
-﻿from app.handlers.user import format_help_information
+from app.handlers.user import WELCOME_MESSAGES, format_help_information
 
 
 def test_format_help_information_mentions_core_user_sections_and_risk() -> None:
@@ -10,3 +10,12 @@ def test_format_help_information_mentions_core_user_sections_and_risk() -> None:
     assert "🏆 Результаты" in text
     assert "🎁 Первые 3 сигнала" in text
     assert "не являются гарантией" in text
+
+
+def test_welcome_messages_introduce_product_before_menu() -> None:
+    text = "\n".join(WELCOME_MESSAGES)
+
+    assert "Вас приветствует бот Алгобет" in text
+    assert "настольному теннису Лиги Про" in text
+    assert "аналитику турниров 24/7" in text
+    assert "технический этап" not in text

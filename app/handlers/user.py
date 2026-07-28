@@ -41,6 +41,19 @@ class CalculatorStates(StatesGroup):
 class MatchAnalysisStates(StatesGroup):
     waiting_for_match = State()
 
+
+WELCOME_MESSAGES = (
+    (
+        "Вас приветствует бот Алгобет.\n\n"
+        "Алгоритмический беттинг по настольному теннису Лиги Про."
+    ),
+    (
+        "Здесь вы можете получать сигналы по матчам, смотреть аналитику турниров 24/7, "
+        "рассчитать размер ставки от банка и оставить заявку на разбор матча специалистом."
+    ),
+)
+
+
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     if message.from_user is None:
@@ -63,10 +76,9 @@ async def start_handler(message: Message) -> None:
         await session.commit()
 
     is_admin = message.from_user.id in get_settings().admin_ids
-    await message.answer(
-        "Добро пожаловать в АлгоБет.\n\nСейчас запущен первый технический этап бота.",
-        reply_markup=main_menu(is_admin=is_admin),
-    )
+    for text in WELCOME_MESSAGES:
+        await message.answer(text)
+    await message.answer("Выберите нужный раздел в меню.", reply_markup=main_menu(is_admin=is_admin))
 
 
 @router.message(F.text == "⬅️ Главное меню")
