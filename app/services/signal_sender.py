@@ -10,10 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings import get_settings
-from app.database.models import ScheduledSignal, SignalDelivery, User, UserAccess
+from app.database.models import Match, ScheduledSignal, SignalDelivery, User, UserAccess
 from app.database.session import SessionFactory
 from app.services.access import consume_signal_access, has_signal_access
 from app.services.admin_notifications import format_delivery_failure_admin_text, notify_admins
+from app.services.excel_parser import ParsedMatch
+from app.services.signal_rules import analyze_match, build_signal_message
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,54 @@ async def _get_delivery(session: AsyncSession, signal: ScheduledSignal, user: Us
     return delivery
 
 
+
+def _parsed_match_from_model(match: Match) -> ParsedMatch:
+    return ParsedMatch(
+        external_match_id=match.external_match_id,
+        external_tournament_id=match.external_tournament_id,
+        source_url=match.source_url,
+        tournament_date=match.tournament_date,
+        tournament_name=(match.raw_data or {}).get("_tournament_name") or "",
+        match_time=match.match_time,
+        match_start_at=match.match_start_at,
+        player_1=match.player_1,
+        player_2=match.player_2,
+        player_1_rating=match.player_1_rating,
+        player_2_rating=match.player_2_rating,
+        score=match.score,
+        raw_data=match.raw_data or {},
+    )
+
+
+async def _refresh_signal_from_current_match(session: AsyncSession, signal: ScheduledSignal) -> bool:
+    match = await session.get(Match, signal.match_id)
+    if match is None:
+        signal.status = "cancelled"
+        signal.cancel_reason = "Матч для сигнала не найден"
+        return False
+    if not match.raw_data:
+        return True
+
+    parsed = _parsed_match_from_model(match)
+    decision = analyze_match(parsed)
+    if not decision.suitable:
+        signal.status = "cancelled"
+        signal.cancel_reason = "Актуальные данные матча больше не подходят под правила"
+        return False
+
+    new_payload = decision.payload or {}
+    old_payload = signal.signal_payload or {}
+    if (
+        old_payload.get("side") != new_payload.get("side")
+        or old_payload.get("signal_group") != new_payload.get("signal_group")
+        or old_payload.get("probability") != new_payload.get("probability")
+        or signal.signal_type != decision.signal_type
+    ):
+        signal.signal_payload = new_payload
+        signal.signal_type = decision.signal_type
+        signal.message_text = build_signal_message(parsed, decision)
+    return True
+
 async def _process_signals(
     bot: Bot,
     session: AsyncSession,
@@ -90,6 +140,10 @@ async def _process_signals(
         summary.processed_signals += 1
         if signal.status == "cancelled":
             continue
+        if signal.status != "sent":
+            is_current = await _refresh_signal_from_current_match(session, signal)
+            if not is_current:
+                continue
         if not signal.message_text:
             signal.status = "cancelled"
             signal.cancel_reason = "Не сформирован текст сигнала"

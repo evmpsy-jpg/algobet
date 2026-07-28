@@ -349,3 +349,55 @@ async def test_process_delivery_now_retries_selected_failed_delivery() -> None:
         assert saved.error_text is None
         assert access.free_signals_remaining == 2
     await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_process_due_signals_cancels_stale_signal_before_send() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        user = User(telegram_id=999, username=None, first_name="Stale", last_name=None)
+        session.add(user)
+        await session.flush()
+        access = UserAccess(user_id=user.id, access_type="trial", status="active", free_signals_remaining=3)
+        match = make_match()
+        match.raw_data = {
+            "CP": 15,
+            "DG": 7,
+            "DH": 0,
+            "EG": 2,
+            "EH": 1,
+            "CS": 6,
+            "CT": 3,
+            "CV": 75,
+            "CW": 13,
+            "Q": 5,
+            "X": 4,
+        }
+        session.add_all([access, match])
+        await session.flush()
+        signal = ScheduledSignal(
+            match_id=match.id,
+            status="scheduled",
+            send_at=datetime(2026, 7, 21, 11, 40, tzinfo=timezone.utc),
+            signal_payload={"side": 2, "signal_group": "all", "probability": 76},
+            message_text="stale signal text",
+        )
+        session.add(signal)
+        await session.commit()
+
+        bot = FakeBot()
+        summary = await process_due_signals(
+            bot,  # type: ignore[arg-type]
+            session,
+            now=datetime(2026, 7, 21, 11, 41, tzinfo=timezone.utc),
+            admin_ids=[],
+        )
+
+        delivery = await session.scalar(select(SignalDelivery))
+        assert summary.processed_signals == 1
+        assert summary.sent_deliveries == 0
+        assert bot.messages == []
+        assert signal.status == "cancelled"
+        assert signal.cancel_reason == "Актуальные данные матча больше не подходят под правила"
+        assert access.free_signals_remaining == 3
+        assert delivery is None
+    await engine.dispose()
