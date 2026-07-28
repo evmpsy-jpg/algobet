@@ -319,7 +319,7 @@ def test_vip_p2_accepts_exact_or_range() -> None:
     assert both.payload["signal_group"] == "vip"
 
 
-def test_vip_group_has_priority_when_all_and_vip_match() -> None:
+def test_all_group_has_priority_when_all_and_vip_match() -> None:
     decision = evaluate_match(
         make_match(
             all_signal_p1=8,
@@ -329,7 +329,7 @@ def test_vip_group_has_priority_when_all_and_vip_match() -> None:
     )
 
     assert decision.suitable is True
-    assert decision.payload["signal_group"] == "vip"
+    assert decision.payload["signal_group"] == "all"
 
 
 def test_boundary_values_are_accepted() -> None:

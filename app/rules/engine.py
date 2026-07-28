@@ -133,8 +133,8 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     #
     # ALL проходит без STOP по CP и форме.
     # VIP требует CP >= min_h2h_games и форму выбранной стороны >= min_form.
-    # Если сторона подходит и под ALL, и под VIP, VIP получает приоритет
-    # только когда VIP-фильтры пройдены.
+    # Если сторона подходит и под ALL, и под VIP, оставляем её в ALL.
+    # VIP используется только для чистых VIP-условий без пересечения с ALL.
     # ---------------------------------------------------------
     min_form = float(rules["min_favorite_form"])
     p1_form_ok = (
@@ -175,8 +175,8 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     p2_vip_ok = p2_vip and cp_ok and p2_form_ok
     p1_ok = p1_all or p1_vip_ok
     p2_ok = p2_all or p2_vip_ok
-    p1_signal_group = "vip" if p1_vip_ok else "all" if p1_all else None
-    p2_signal_group = "vip" if p2_vip_ok else "all" if p2_all else None
+    p1_signal_group = "vip" if p1_vip_ok and not p1_all else "all" if p1_all or p1_vip_ok else None
+    p2_signal_group = "vip" if p2_vip_ok and not p2_all else "all" if p2_all or p2_vip_ok else None
 
     if not p1_ok and not p2_ok:
         failed = [
