@@ -87,6 +87,26 @@ async def recalculate(dry_run: bool, statuses: list[str]) -> None:
 
             send_at = match.match_start_at.replace(tzinfo=None) - timedelta(minutes=lead_minutes)
 
+            if signal.status == "sent":
+                # Для отправленных — только обновляем payload/signal_type для статистики,
+                # статус и результат не трогаем.
+                if decision.suitable:
+                    if not dry_run:
+                        signal.signal_type = decision.signal_type
+                        signal.signal_payload = decision.payload or {}
+                        signal.recalculated_at = now_utc
+                    stats["kept_scheduled"] += 1
+                else:
+                    # Сигнал не прошёл бы по новым правилам — фиксируем в логе,
+                    # но статус sent не меняем.
+                    logger.info(
+                        "SENT не прошёл правила  match_id=%d  %s vs %s  причина: %s",
+                        match.external_match_id, match.player_1, match.player_2,
+                        decision.reason or "не соответствует условиям",
+                    )
+                    stats["cancelled"] += 1
+                continue
+
             if not decision.suitable:
                 reason = decision.reason or "Матч не соответствует условиям"
                 if signal.status != "cancelled":
@@ -151,8 +171,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Показать изменения без записи в БД.")
     parser.add_argument(
         "--status",
-        default="scheduled,cancelled",
-        help="Статусы для пересчёта через запятую (default: scheduled,cancelled).",
+        default="scheduled,cancelled,sent",
+        help="Статусы для пересчёта через запятую (default: scheduled,cancelled,sent).",
     )
     args = parser.parse_args()
     statuses = [s.strip() for s in args.status.split(",") if s.strip()]
