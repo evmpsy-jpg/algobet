@@ -173,8 +173,8 @@ def evaluate_match(match: MatchData) -> SignalDecision:
 
     p1_vip_ok = p1_vip and cp_ok and p1_form_ok
     p2_vip_ok = p2_vip and cp_ok and p2_form_ok
-    p1_ok = p1_all or p1_vip_ok
-    p2_ok = p2_all or p2_vip_ok
+    p1_ok = (p1_all and cp_ok) or p1_vip_ok
+    p2_ok = (p2_all and cp_ok) or p2_vip_ok
     p1_signal_group = "vip" if p1_vip_ok and not p1_all else "all" if p1_all or p1_vip_ok else None
     p2_signal_group = "vip" if p2_vip_ok and not p2_all else "all" if p2_all or p2_vip_ok else None
 

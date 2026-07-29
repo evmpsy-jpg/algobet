@@ -433,8 +433,14 @@ def test_probability_levels() -> None:
     assert top.level == "TOP"
 
 
-def test_all_signal_ignores_h2h_stop() -> None:
+def test_all_signal_requires_h2h_minimum() -> None:
     decision = evaluate_match(make_match(h2h_games=4, all_signal_p1=8, p1_exact=0, p1_range=0))
+
+    assert decision.suitable is False
+
+
+def test_all_signal_passes_with_enough_h2h() -> None:
+    decision = evaluate_match(make_match(h2h_games=5, all_signal_p1=8, p1_exact=0, p1_range=0))
 
     assert decision.suitable is True
     assert decision.payload["signal_group"] == "all"
