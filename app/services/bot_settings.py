@@ -79,12 +79,12 @@ async def get_subscription_payment_config(session: AsyncSession) -> PaymentConfi
     payment_details = await get_bot_setting(
         session,
         SUBSCRIPTION_PAYMENT_DETAILS_KEY,
-        settings.analysis_payment_details,
+        settings.subscription_payment_details,
     )
     specialist_contact = await get_bot_setting(
         session,
         SUBSCRIPTION_SPECIALIST_CONTACT_KEY,
-        settings.analysis_specialist_contact,
+        settings.subscription_specialist_contact,
     )
     return PaymentConfig(payment_details=payment_details, specialist_contact=specialist_contact)
 

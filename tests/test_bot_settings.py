@@ -84,6 +84,22 @@ async def test_subscription_payment_config_uses_separate_saved_values() -> None:
 
 
 @pytest.mark.asyncio
+async def test_payment_configs_use_separate_defaults() -> None:
+    engine, factory = await make_session()
+    settings = Settings(BOT_TOKEN="token")
+    async with factory() as session:
+        analysis_config = await get_analysis_payment_config(session)
+        subscription_config = await get_subscription_payment_config(session)
+
+    await engine.dispose()
+
+    assert analysis_config.payment_details == settings.analysis_payment_details
+    assert analysis_config.specialist_contact == settings.analysis_specialist_contact
+    assert subscription_config.payment_details == settings.subscription_payment_details
+    assert subscription_config.specialist_contact == settings.subscription_specialist_contact
+
+
+@pytest.mark.asyncio
 async def test_system_runtime_settings_override_env_defaults() -> None:
     engine, factory = await make_session()
     settings = Settings(BOT_TOKEN="token", SQLITE_BACKUP_ENABLED=True, SQLITE_BACKUP_INTERVAL_HOURS=24, SQLITE_BACKUP_KEEP=10)

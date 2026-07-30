@@ -11,14 +11,14 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import desc, func, select
 
 from app.settings import get_settings
-from app.database.models import ImportBatch, Match, ScheduledSignal, SignalResult, User, UserAccess
+from app.database.models import ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalResult, User, UserAccess
 from app.database.session import SessionFactory
 from app.keyboards.common import main_menu
 from app.services.access import has_analytics_access, has_signal_access, ensure_trial_access
 from app.services.admin_notifications import notify_admins
 from app.services.bot_settings import get_analysis_payment_config
 from app.services.match_analysis import create_match_analysis_request, format_analysis_request_admin_text, format_analysis_request_user_text, validate_match_analysis_text
-from app.services.signal_results import format_winrate, result_short_label, summarize_results
+from app.services.signal_results import format_winrate, result_short_label, signal_stats_eligible, summarize_results
 from app.services.stake_calculator import STEP_OPTIONS, format_step_stake_calculator, parse_bank, parse_step
 from app.services.subscriptions import (
     PLAN_GROUP_LABELS,
@@ -128,9 +128,14 @@ def format_public_results(
     rows: list[tuple[ScheduledSignal, Match, SignalResult]],
     total_sent: int,
 ) -> str:
+    visible_rows = [
+        (signal, match, result)
+        for signal, match, result in rows
+        if signal_stats_eligible(match.raw_data)
+    ]
     summary = summarize_results(
-        [(signal.signal_payload, result.status) for signal, _, result in rows],
-        total_sent=total_sent,
+        [(signal.signal_payload, result.status) for signal, _, result in visible_rows],
+        total_sent=min(total_sent, len(visible_rows)),
     )
     lines = [
         "🏆 Результаты сигналов",
@@ -143,11 +148,11 @@ def format_public_results(
         "",
         "Последние результаты:",
     ]
-    if not rows:
+    if not visible_rows:
         lines.append("пока нет оцененных сигналов")
         return "\n".join(lines)
 
-    for signal, match, result in rows[:10]:
+    for signal, match, result in visible_rows[:10]:
         payload = signal.signal_payload or {}
         side = payload.get("side")
         side_text = f"П{side}" if side in (1, 2) else "—"
@@ -275,6 +280,11 @@ def format_tournament_analytics(
     ready_signals: int,
     upcoming_signals: list[tuple[ScheduledSignal, Match]],
 ) -> str:
+    visible_signals = [
+        (signal, match)
+        for signal, match in upcoming_signals
+        if signal_stats_eligible(match.raw_data)
+    ]
     lines = ["📊 Аналитика турниров", ""]
     if latest_import is None:
         lines.append("Данные турниров пока не загружены.")
@@ -289,8 +299,8 @@ def format_tournament_analytics(
         "",
         "Ближайшие сигналы:",
     ])
-    if upcoming_signals:
-        for signal, match in upcoming_signals:
+    if visible_signals:
+        for signal, match in visible_signals:
             payload = signal.signal_payload or {}
             side = payload.get("side")
             side_text = f"П{side}" if side in (1, 2) else "—"
@@ -331,8 +341,13 @@ async def tournament_analytics_handler(message: Message) -> None:
         day_start_utc = day_start.astimezone(timezone.utc).replace(tzinfo=None)
         day_end_utc = day_end.astimezone(timezone.utc).replace(tzinfo=None)
         signal_rows = list((await session.execute(
-            select(ScheduledSignal, Match)
+            select(ScheduledSignal, Match, SignalDecisionLog.suitable)
             .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(
+                SignalDecisionLog,
+                (SignalDecisionLog.match_id == ScheduledSignal.match_id)
+                & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
+            )
             .where(ScheduledSignal.status.in_(["scheduled", "ready"]))
             .where(ScheduledSignal.send_at >= now)
             .where(ScheduledSignal.send_at >= day_start_utc)
@@ -342,17 +357,20 @@ async def tournament_analytics_handler(message: Message) -> None:
         upcoming_signals = filter_accessible_signal_rows(
             user,
             access,
-            signal_rows,
+            [(signal, match) for signal, match, decision_suitable in signal_rows if signal_stats_eligible(match.raw_data, decision_suitable=decision_suitable)],
             admin_ids=settings.admin_ids,
             now=now,
         )
+        visible_upcoming_signals = upcoming_signals
+        scheduled_signals = sum(1 for signal, match in visible_upcoming_signals if signal.status == "scheduled")
+        ready_signals = sum(1 for signal, match in visible_upcoming_signals if signal.status == "ready")
     await message.answer(format_tournament_analytics(
         latest_import=latest_import,
         total_matches=total_matches,
         active_matches=active_matches,
         scheduled_signals=scheduled_signals,
         ready_signals=ready_signals,
-        upcoming_signals=upcoming_signals,
+        upcoming_signals=visible_upcoming_signals,
     ))
 
 @router.message(F.text == "💳 Подписка")
@@ -475,18 +493,24 @@ async def help_information_handler(message: Message) -> None:
 @router.message(F.text == "🏆 Результаты")
 async def public_results_handler(message: Message) -> None:
     async with SessionFactory() as session:
-        total_sent = int(await session.scalar(
-            select(func.count(ScheduledSignal.id)).where(ScheduledSignal.status == "sent")
-        ) or 0)
         rows = list((await session.execute(
-            select(ScheduledSignal, Match, SignalResult)
+            select(ScheduledSignal, Match, SignalResult, SignalDecisionLog.suitable)
             .join(Match, Match.id == ScheduledSignal.match_id)
             .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            .outerjoin(
+                SignalDecisionLog,
+                (SignalDecisionLog.match_id == ScheduledSignal.match_id)
+                & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
+            )
             .where(SignalResult.status.in_(["won", "lost", "void"]))
             .order_by(desc(SignalResult.fixed_at), desc(ScheduledSignal.sent_at), desc(ScheduledSignal.id))
-            .limit(10)
         )).all())
-    await message.answer(format_public_results(rows, total_sent))
+    visible_rows = [
+        (signal, match, result)
+        for signal, match, result, decision_suitable in rows
+        if signal_stats_eligible(match.raw_data, decision_suitable=decision_suitable)
+    ]
+    await message.answer(format_public_results(visible_rows, len(visible_rows)))
 
 def calculator_result_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[

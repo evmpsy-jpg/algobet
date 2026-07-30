@@ -36,7 +36,7 @@ from app.services.match_analysis import format_analysis_status_user_text
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
-from app.services.signal_results import auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, signal_group_title, summarize_results
+from app.services.signal_results import auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, signal_group_title, signal_stats_eligible, summarize_results
 from app.services.signal_tariffs import SIGNAL_TARIFF_ORDER, signal_tariff_title
 from app.services.sqlite_backup import create_sqlite_backup, latest_sqlite_backup, sqlite_database_path
 from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price, format_subscription_activation_user_text
@@ -1275,11 +1275,37 @@ async def admin_statistics(message: Message) -> None:
             select(func.count(func.distinct(SignalDelivery.signal_id)))
             .where(SignalDelivery.status == "sent")
         ) or 0)
-        result_rows = list((await session.execute(
-            select(ScheduledSignal.signal_payload, SignalResult.status)
-            .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
-            .where(ScheduledSignal.status == "sent")
-        )).all())
+        sent_payload_rows = (
+            await session.execute(
+                select(ScheduledSignal.signal_payload, Match.raw_data, SignalDecisionLog.suitable)
+                .join(Match, Match.id == ScheduledSignal.match_id)
+                .outerjoin(
+                    SignalDecisionLog,
+                    (SignalDecisionLog.match_id == ScheduledSignal.match_id)
+                    & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
+                )
+                .where(ScheduledSignal.status == "sent")
+            )
+        ).all()
+        eligible_sent_total = sum(
+            1 for payload, raw_data, decision_suitable in sent_payload_rows
+            if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)
+        )
+        result_rows = [
+            (payload, status)
+            for payload, status, raw_data, decision_suitable in (await session.execute(
+                select(ScheduledSignal.signal_payload, SignalResult.status, Match.raw_data, SignalDecisionLog.suitable)
+                .join(Match, Match.id == ScheduledSignal.match_id)
+                .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+                .outerjoin(
+                    SignalDecisionLog,
+                    (SignalDecisionLog.match_id == ScheduledSignal.match_id)
+                    & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
+                )
+                .where(ScheduledSignal.status == "sent")
+            )).all()
+            if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)
+        ]
         next_signal = (await session.execute(
             select(ScheduledSignal, Match).join(Match, Match.id == ScheduledSignal.match_id)
             .where(ScheduledSignal.status == "scheduled")
@@ -1290,7 +1316,7 @@ async def admin_statistics(message: Message) -> None:
         signal, match = next_signal
         next_text = f"{_fmt_dt(signal.send_at, '%d.%m %H:%M')} · {match.player_1} — {match.player_2}"
 
-    sent_total = counts.get("sent", 0)
+    sent_total = eligible_sent_total
     result_summary = summarize_results(result_rows, total_sent=sent_total)
     tariff_lines = []
     for tariff in SIGNAL_TARIFF_ORDER:
@@ -2341,6 +2367,32 @@ async def admin_edit_analysis_contact_callback(callback: CallbackQuery, state: F
     if callback.message:
         await callback.message.answer(
             "Напишите контакт специалиста для анализа матча.\n\n"
+            "Например: @ivanov или номер телефона."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admset:subscription_payment")
+async def admin_edit_subscription_payment_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await state.set_state(AdminSettingsStates.waiting_for_subscription_payment_details)
+    if callback.message:
+        await callback.message.answer(
+            "Напишите новые реквизиты для оплаты подписки.\n\n"
+            "Они будут показаны пользователю после создания заявки."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admset:subscription_contact")
+async def admin_edit_subscription_contact_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin_user(callback.from_user.id):
+        return
+    await state.set_state(AdminSettingsStates.waiting_for_subscription_specialist_contact)
+    if callback.message:
+        await callback.message.answer(
+            "Напишите контакт специалиста для подписки.\n\n"
             "Например: @ivanov или номер телефона."
         )
     await callback.answer()

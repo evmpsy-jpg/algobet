@@ -379,10 +379,14 @@ async def test_collect_quality_summary_groups_sent_signal_results() -> None:
                 match_start_at=datetime(2026, 7, 24, 12, 30),
                 player_1=f"Player {offset + 1}",
                 player_2=f"Opponent {offset + 1}",
-                raw_data={},
+                raw_data={"CP": 6},
                 is_present_in_latest_import=True,
             )
             matches.append(match)
+        matches[0].raw_data = {"CP": 4}
+        matches[1].raw_data = {"CP": 5}
+        matches[2].raw_data = {"CP": 6}
+        matches[3].raw_data = {"CP": 6}
         session.add_all(matches)
         await session.flush()
 
@@ -431,14 +435,101 @@ async def test_collect_quality_summary_groups_sent_signal_results() -> None:
 
     await engine.dispose()
 
-    assert summary.sent_total == 3
-    assert summary.overall.evaluated == 2
+    assert summary.sent_total == 2
+    assert summary.overall.evaluated == 1
     assert summary.overall.unrated_sent == 1
-    assert summary.overall.counter.winrate == 50.0
-    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_group] == [("vip_99", 1, 1), ("all_95", 2, 1)]
-    assert summary.by_group[0].counter.won == 1
-    assert summary.by_group[1].counter.lost == 1
-    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_level] == [("TOP", 2, 1), ("STANDARD", 1, 1)]
+    assert summary.overall.counter.winrate == 0.0
+    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_group] == [("all_95", 2, 1)]
+    assert summary.by_group[0].counter.lost == 1
+    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_level] == [("TOP", 1, 0), ("STANDARD", 1, 1)]
+
+
+@pytest.mark.asyncio
+async def test_collect_quality_summary_excludes_rejected_signals_from_results() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        batch = ImportBatch(
+            file_name="sample.xlsx",
+            stored_path="sample.xlsx",
+            file_sha256="abc",
+            uploaded_by_telegram_id=1,
+            status="completed",
+            parsed_matches=2,
+            created_at=datetime(2026, 7, 24, 7, 0),
+            finished_at=datetime(2026, 7, 24, 7, 1),
+        )
+        session.add(batch)
+        await session.flush()
+
+        rejected_match = Match(
+            external_match_id=701,
+            external_tournament_id=9001,
+            source_url="https://example.test/9001/701",
+            tournament_date="24.07.2026",
+            match_time="12:30",
+            match_start_at=datetime(2026, 7, 24, 12, 30),
+            player_1="Rejected 1",
+            player_2="Rejected 2",
+            raw_data={"CP": 6},
+            is_present_in_latest_import=True,
+        )
+        accepted_match = Match(
+            external_match_id=702,
+            external_tournament_id=9001,
+            source_url="https://example.test/9001/702",
+            tournament_date="24.07.2026",
+            match_time="12:40",
+            match_start_at=datetime(2026, 7, 24, 12, 40),
+            player_1="Accepted 1",
+            player_2="Accepted 2",
+            raw_data={"CP": 6},
+            is_present_in_latest_import=True,
+        )
+        session.add_all([rejected_match, accepted_match])
+        await session.flush()
+
+        rejected_signal = ScheduledSignal(
+            match_id=rejected_match.id,
+            status="sent",
+            send_at=datetime(2026, 7, 24, 12, 10),
+            source_import_id=batch.id,
+            signal_type="SET_ALL_STANDARD",
+            signal_payload={"signal_group": "all", "level": "STANDARD", "side": 2, "probability": 95},
+            message_text="rejected signal",
+        )
+        accepted_signal = ScheduledSignal(
+            match_id=accepted_match.id,
+            status="sent",
+            send_at=datetime(2026, 7, 24, 12, 11),
+            source_import_id=batch.id,
+            signal_type="SET_ALL_TOP",
+            signal_payload={"signal_group": "all", "level": "TOP", "side": 1, "probability": 96},
+            message_text="accepted signal",
+        )
+        session.add_all([rejected_signal, accepted_signal])
+        await session.flush()
+        session.add_all([
+            SignalDecisionLog(match_id=rejected_match.id, import_batch_id=batch.id, algorithm_version="v1", source="import", suitable=False, reason="Недостаточно игр", decision_payload={"signal_group": "all"}),
+            SignalDecisionLog(match_id=accepted_match.id, import_batch_id=batch.id, algorithm_version="v1", source="import", suitable=True, side=1, selected_player="Accepted 1", probability=96, level="TOP", signal_type="SET_ALL_TOP", decision_payload={"signal_group": "all"}),
+            SignalResult(signal_id=rejected_signal.id, status="lost", source="auto"),
+            SignalResult(signal_id=accepted_signal.id, status="won", source="auto"),
+        ])
+        await session.commit()
+
+        summary = await collect_quality_summary(session)
+
+    await engine.dispose()
+
+    assert summary.sent_total == 1
+    assert summary.overall.evaluated == 1
+    assert summary.overall.counter.won == 1
+    assert summary.overall.counter.lost == 0
+    assert summary.overall.unrated_sent == 0
+    assert [(item.key, item.sent_total, item.evaluated) for item in summary.by_group] == [("all_95", 1, 1)]
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ def make_match() -> Match:
         player_1_rating=None,
         player_2_rating=None,
         score=None,
-        raw_data={},
+        raw_data={"CP": 5},
         is_present_in_latest_import=True,
     )
 
@@ -94,18 +94,21 @@ def test_format_tournament_analytics_shows_all_provided_signals() -> None:
             signal_payload={"level": "STANDARD", "side": 2},
             message_text="signal",
         )
+        if index == 0:
+            match.raw_data = {"CP": 4}
         signals.append((signal, match))
 
     text = format_tournament_analytics(
         latest_import=batch,
         total_matches=10,
         active_matches=8,
-        scheduled_signals=7,
+        scheduled_signals=6,
         ready_signals=0,
         upcoming_signals=signals,
     )
 
-    assert text.count("STANDARD · П2") == 7
+    assert text.count("STANDARD · П2") == 6
+    assert "Игрок 1" not in text
 
 def test_filter_accessible_signal_rows_respects_subscription_groups() -> None:
     user = User(id=1, telegram_id=1001)

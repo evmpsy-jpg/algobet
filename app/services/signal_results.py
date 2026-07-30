@@ -255,6 +255,25 @@ def signal_group_title(group: str) -> str:
     }.get(group.lower(), group.upper())
 
 
+def signal_stats_cp_value(raw_data: dict[str, Any] | None) -> float | None:
+    if not isinstance(raw_data, dict):
+        return None
+    value = raw_data.get("CP")
+    if value is None:
+        return None
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def signal_stats_eligible(raw_data: dict[str, Any] | None, *, min_cp: float = 5.0, decision_suitable: bool | None = None) -> bool:
+    if decision_suitable is False:
+        return False
+    cp_value = signal_stats_cp_value(raw_data)
+    return cp_value is not None and cp_value >= min_cp
+
+
 def summarize_results(rows: list[tuple[dict[str, Any] | None, str | None]], total_sent: int = 0) -> ResultSummary:
     summary = ResultSummary(total_sent=total_sent)
     for payload, status in rows:

@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     web_admin_superusers_text: str = Field(default="", alias="WEB_ADMIN_SUPERUSERS")
     analysis_payment_details: str = Field(default="Реквизиты для оплаты уточните у специалиста.", alias="ANALYSIS_PAYMENT_DETAILS")
     analysis_specialist_contact: str = Field(default="@your_specialist", alias="ANALYSIS_SPECIALIST_CONTACT")
+    subscription_payment_details: str = Field(default="Реквизиты для оплаты уточните у специалиста.", alias="SUBSCRIPTION_PAYMENT_DETAILS")
+    subscription_specialist_contact: str = Field(default="@your_specialist", alias="SUBSCRIPTION_SPECIALIST_CONTACT")
     google_sheets_sync_enabled: bool = Field(default=False, alias="GOOGLE_SHEETS_SYNC_ENABLED")
     google_sheet_id: str = Field(default="", alias="GOOGLE_SHEET_ID")
     google_service_account_file: str = Field(default="", alias="GOOGLE_SERVICE_ACCOUNT_FILE")

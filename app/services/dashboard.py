@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sqlite_backup import BackupInfo, latest_sqlite_backup, list_sqlite_backups, sqlite_database_path, verify_sqlite_backup
 from app.services.rules_config import get_signal_rules
-from app.services.signal_results import LEVEL_ORDER, ResultCounter, summarize_results
+from app.services.signal_results import LEVEL_ORDER, ResultCounter, signal_stats_eligible, summarize_results
 from app.services.signal_tariffs import SIGNAL_TARIFF_ORDER, signal_tariff_key, signal_tariff_title
 from app.settings import get_settings
 from app.services.bot_settings import apply_system_runtime_settings, get_system_runtime_settings
@@ -489,18 +489,35 @@ def _make_quality_item(key: str, title: str, sent_total: int, rows: list[tuple[d
 async def collect_quality_summary(session: AsyncSession) -> QualitySummary:
     sent_payload_rows = (
         await session.execute(
-            select(ScheduledSignal.signal_payload).where(ScheduledSignal.status == 'sent')
-        )
-    ).all()
-    sent_payloads = [payload for (payload,) in sent_payload_rows]
-
-    result_rows = list((
-        await session.execute(
-            select(ScheduledSignal.signal_payload, SignalResult.status)
-            .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+            select(ScheduledSignal.signal_payload, Match.raw_data, SignalDecisionLog.suitable)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(
+                SignalDecisionLog,
+                (SignalDecisionLog.match_id == ScheduledSignal.match_id)
+                & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
+            )
             .where(ScheduledSignal.status == 'sent')
         )
-    ).all())
+    ).all()
+    sent_payloads = [payload for payload, raw_data, decision_suitable in sent_payload_rows if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)]
+
+    result_rows = [
+        (payload, status)
+        for payload, status, raw_data, decision_suitable in (
+            await session.execute(
+                select(ScheduledSignal.signal_payload, SignalResult.status, Match.raw_data, SignalDecisionLog.suitable)
+                .join(Match, Match.id == ScheduledSignal.match_id)
+                .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+                .outerjoin(
+                    SignalDecisionLog,
+                    (SignalDecisionLog.match_id == ScheduledSignal.match_id)
+                    & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
+                )
+                .where(ScheduledSignal.status == 'sent')
+            )
+        ).all()
+        if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)
+    ]
 
     sent_total = len(sent_payloads)
     overall_summary = summarize_results(result_rows, total_sent=sent_total)
