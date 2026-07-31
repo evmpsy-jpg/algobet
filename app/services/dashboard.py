@@ -489,7 +489,7 @@ def _make_quality_item(key: str, title: str, sent_total: int, rows: list[tuple[d
 async def collect_quality_summary(session: AsyncSession) -> QualitySummary:
     sent_payload_rows = (
         await session.execute(
-            select(ScheduledSignal.signal_payload, Match.raw_data, SignalDecisionLog.suitable)
+            select(ScheduledSignal.signal_payload, Match, SignalDecisionLog.suitable)
             .join(Match, Match.id == ScheduledSignal.match_id)
             .outerjoin(
                 SignalDecisionLog,
@@ -499,13 +499,13 @@ async def collect_quality_summary(session: AsyncSession) -> QualitySummary:
             .where(ScheduledSignal.status == 'sent')
         )
     ).all()
-    sent_payloads = [payload for payload, raw_data, decision_suitable in sent_payload_rows if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)]
+    sent_payloads = [payload for payload, match, decision_suitable in sent_payload_rows if signal_stats_eligible(match, decision_suitable=decision_suitable)]
 
     result_rows = [
         (payload, status)
-        for payload, status, raw_data, decision_suitable in (
+        for payload, status, match, decision_suitable in (
             await session.execute(
-                select(ScheduledSignal.signal_payload, SignalResult.status, Match.raw_data, SignalDecisionLog.suitable)
+                select(ScheduledSignal.signal_payload, SignalResult.status, Match, SignalDecisionLog.suitable)
                 .join(Match, Match.id == ScheduledSignal.match_id)
                 .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
                 .outerjoin(
@@ -516,7 +516,7 @@ async def collect_quality_summary(session: AsyncSession) -> QualitySummary:
                 .where(ScheduledSignal.status == 'sent')
             )
         ).all()
-        if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)
+        if signal_stats_eligible(match, decision_suitable=decision_suitable)
     ]
 
     sent_total = len(sent_payloads)

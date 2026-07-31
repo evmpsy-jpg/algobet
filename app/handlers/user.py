@@ -131,7 +131,7 @@ def format_public_results(
     visible_rows = [
         (signal, match, result)
         for signal, match, result in rows
-        if signal_stats_eligible(match.raw_data)
+        if signal_stats_eligible(match)
     ]
     summary = summarize_results(
         [(signal.signal_payload, result.status) for signal, _, result in visible_rows],
@@ -283,7 +283,7 @@ def format_tournament_analytics(
     visible_signals = [
         (signal, match)
         for signal, match in upcoming_signals
-        if signal_stats_eligible(match.raw_data)
+        if signal_stats_eligible(match)
     ]
     lines = ["📊 Аналитика турниров", ""]
     if latest_import is None:
@@ -357,7 +357,7 @@ async def tournament_analytics_handler(message: Message) -> None:
         upcoming_signals = filter_accessible_signal_rows(
             user,
             access,
-            [(signal, match) for signal, match, decision_suitable in signal_rows if signal_stats_eligible(match.raw_data, decision_suitable=decision_suitable)],
+            [(signal, match) for signal, match, decision_suitable in signal_rows if signal_stats_eligible(match, decision_suitable=decision_suitable)],
             admin_ids=settings.admin_ids,
             now=now,
         )
@@ -508,7 +508,7 @@ async def public_results_handler(message: Message) -> None:
     visible_rows = [
         (signal, match, result)
         for signal, match, result, decision_suitable in rows
-        if signal_stats_eligible(match.raw_data, decision_suitable=decision_suitable)
+        if signal_stats_eligible(match, decision_suitable=decision_suitable)
     ]
     await message.answer(format_public_results(visible_rows, len(visible_rows)))
 

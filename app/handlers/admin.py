@@ -1277,7 +1277,7 @@ async def admin_statistics(message: Message) -> None:
         ) or 0)
         sent_payload_rows = (
             await session.execute(
-                select(ScheduledSignal.signal_payload, Match.raw_data, SignalDecisionLog.suitable)
+                select(ScheduledSignal.signal_payload, Match, SignalDecisionLog.suitable)
                 .join(Match, Match.id == ScheduledSignal.match_id)
                 .outerjoin(
                     SignalDecisionLog,
@@ -1288,13 +1288,13 @@ async def admin_statistics(message: Message) -> None:
             )
         ).all()
         eligible_sent_total = sum(
-            1 for payload, raw_data, decision_suitable in sent_payload_rows
-            if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)
+            1 for payload, match, decision_suitable in sent_payload_rows
+            if signal_stats_eligible(match, decision_suitable=decision_suitable)
         )
         result_rows = [
             (payload, status)
-            for payload, status, raw_data, decision_suitable in (await session.execute(
-                select(ScheduledSignal.signal_payload, SignalResult.status, Match.raw_data, SignalDecisionLog.suitable)
+            for payload, status, match, decision_suitable in (await session.execute(
+                select(ScheduledSignal.signal_payload, SignalResult.status, Match, SignalDecisionLog.suitable)
                 .join(Match, Match.id == ScheduledSignal.match_id)
                 .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
                 .outerjoin(
@@ -1304,7 +1304,7 @@ async def admin_statistics(message: Message) -> None:
                 )
                 .where(ScheduledSignal.status == "sent")
             )).all()
-            if signal_stats_eligible(raw_data, decision_suitable=decision_suitable)
+            if signal_stats_eligible(match, decision_suitable=decision_suitable)
         ]
         next_signal = (await session.execute(
             select(ScheduledSignal, Match).join(Match, Match.id == ScheduledSignal.match_id)

@@ -8,7 +8,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.excel_mapping import get_excel_mapping
 from app.database.models import Match, ScheduledSignal, SignalResult
+from app.domain.models import MatchData
+from app.rules.engine import evaluate_match
 from app.services.signal_tariffs import signal_tariff_key
 
 RESULT_STATUSES = {"won", "lost", "void", "unknown"}
@@ -255,6 +258,69 @@ def signal_group_title(group: str) -> str:
     }.get(group.lower(), group.upper())
 
 
+
+
+def _number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).replace("%", "").replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _match_data_for_stats(match: Match) -> MatchData | None:
+    raw_data = match.raw_data if isinstance(match.raw_data, dict) else None
+    if raw_data is None:
+        return None
+    columns = get_excel_mapping()
+
+    def get(field: str) -> float | None:
+        return _number(raw_data.get(columns[field]))
+
+    return MatchData(
+        match_id=match.external_match_id or match.id,
+        tournament_id=match.external_tournament_id or 0,
+        source_url=match.source_url,
+        tournament_date=match.tournament_date,
+        tournament_name=str(raw_data.get("_tournament_name") or ""),
+        match_time=match.match_time,
+        match_start_at=match.match_start_at,
+        player_1=match.player_1,
+        player_2=match.player_2,
+        player_1_rating=match.player_1_rating,
+        player_2_rating=match.player_2_rating,
+        score=match.score,
+        h2h_games=get("h2h_games"),
+        form_p1=get("form_p1"),
+        form_p2=get("form_p2"),
+        favorite_form_p1=get("favorite_form_p1"),
+        favorite_form_p2=get("favorite_form_p2"),
+        bg_p1=get("bg_p1"),
+        bf_p2=get("bf_p2"),
+        probability_p1=get("probability_p1"),
+        probability_p2=get("probability_p2"),
+        all_signal_p1=get("all_signal_p1"),
+        all_signal_p2=get("all_signal_p2"),
+        p1_exact=get("p1_exact"),
+        p2_exact=get("p2_exact"),
+        p1_range=get("p1_range"),
+        p2_range=get("p2_range"),
+        h2h_p1=get("h2h_p1"),
+        h2h_p2=get("h2h_p2"),
+        average_h2h_handicap=get("average_h2h_handicap"),
+        average_difference=get("average_difference"),
+        set1_handicap=get("set1_handicap"),
+        set2_handicap=get("set2_handicap"),
+        set3_handicap=get("set3_handicap"),
+        raw_data=raw_data,
+    )
+
+
 def signal_stats_cp_value(raw_data: dict[str, Any] | None) -> float | None:
     if not isinstance(raw_data, dict):
         return None
@@ -267,9 +333,37 @@ def signal_stats_cp_value(raw_data: dict[str, Any] | None) -> float | None:
         return None
 
 
-def signal_stats_eligible(raw_data: dict[str, Any] | None, *, min_cp: float = 5.0, decision_suitable: bool | None = None) -> bool:
+def signal_stats_eligible(match_or_raw_data: Match | dict[str, Any] | None, *, min_cp: float = 5.0, decision_suitable: bool | None = None) -> bool:
     if decision_suitable is False:
         return False
+
+    raw_data: dict[str, Any] | None
+    if isinstance(match_or_raw_data, Match):
+        raw_data = match_or_raw_data.raw_data if isinstance(match_or_raw_data.raw_data, dict) else None
+        if raw_data is None:
+            return False
+        columns = get_excel_mapping()
+        rule_keys = (
+            columns["form_p1"],
+            columns["form_p2"],
+            columns["probability_p1"],
+            columns["probability_p2"],
+            columns["all_signal_p1"],
+            columns["all_signal_p2"],
+            columns["p1_exact"],
+            columns["p2_exact"],
+            columns["p1_range"],
+            columns["p2_range"],
+        )
+        if any(raw_data.get(key) is not None for key in rule_keys):
+            match_data = _match_data_for_stats(match_or_raw_data)
+            if match_data is None:
+                return False
+            if not evaluate_match(match_data).suitable:
+                return False
+    else:
+        raw_data = match_or_raw_data if isinstance(match_or_raw_data, dict) else None
+
     cp_value = signal_stats_cp_value(raw_data)
     return cp_value is not None and cp_value >= min_cp
 
