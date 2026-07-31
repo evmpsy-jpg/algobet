@@ -125,14 +125,18 @@ def _fmt_dt(value: datetime | None, fmt: str = "%d.%m %H:%M") -> str:
 
 
 def format_public_results(
-    rows: list[tuple[ScheduledSignal, Match, SignalResult]],
+    rows: list[tuple],
     total_sent: int,
 ) -> str:
-    visible_rows = [
-        (signal, match, result)
-        for signal, match, result in rows
-        if signal_stats_eligible(match)
-    ]
+    visible_rows: list[tuple[ScheduledSignal, Match, SignalResult]] = []
+    for row in rows:
+        if len(row) == 4:
+            signal, match, result, decision_suitable = row
+        else:
+            signal, match, result = row
+            decision_suitable = None
+        if signal_stats_eligible(match, decision_suitable=decision_suitable):
+            visible_rows.append((signal, match, result))
     summary = summarize_results(
         [(signal.signal_payload, result.status) for signal, _, result in visible_rows],
         total_sent=min(total_sent, len(visible_rows)),
@@ -505,12 +509,7 @@ async def public_results_handler(message: Message) -> None:
             .where(SignalResult.status.in_(["won", "lost", "void"]))
             .order_by(desc(SignalResult.fixed_at), desc(ScheduledSignal.sent_at), desc(ScheduledSignal.id))
         )).all())
-    visible_rows = [
-        (signal, match, result)
-        for signal, match, result, decision_suitable in rows
-        if signal_stats_eligible(match, decision_suitable=decision_suitable)
-    ]
-    await message.answer(format_public_results(visible_rows, len(visible_rows)))
+    await message.answer(format_public_results(rows, len(rows)))
 
 def calculator_result_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
