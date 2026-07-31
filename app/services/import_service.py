@@ -67,6 +67,13 @@ async def import_parse_result(
         raise ValueError(f"Unsupported past_due_signal_action: {past_due_signal_action}")
 
     settings = get_settings()
+    warnings = list(result.warnings)
+    unique_matches = list({parsed.external_match_id: parsed for parsed in result.matches}.values())
+    if len(unique_matches) != len(result.matches):
+        duplicate_count = len(result.matches) - len(unique_matches)
+        warnings.append(
+            f"В файле найдены дубликаты external_match_id. Использована последняя запись, всего дубликатов: {duplicate_count}."
+        )
     batch = ImportBatch(
         file_name=original_name,
         stored_path=stored_path,
@@ -74,7 +81,7 @@ async def import_parse_result(
         uploaded_by_telegram_id=uploaded_by,
         status="processing",
         total_rows=result.total_rows,
-        parsed_matches=len(result.matches),
+        parsed_matches=len(unique_matches),
     )
     session.add(batch)
     await session.flush()
@@ -94,7 +101,7 @@ async def import_parse_result(
             .values(is_present_in_latest_import=False)
         )
 
-    for parsed in result.matches:
+    for parsed in unique_matches:
         existing = await session.scalar(
             select(Match).where(Match.external_match_id == parsed.external_match_id)
         )
@@ -257,14 +264,14 @@ async def import_parse_result(
     batch.inserted_matches = inserted
     batch.updated_matches = updated_count
     batch.missing_matches = len(missing_matches)
-    batch.error_text = "\n".join(result.warnings) if result.warnings else None
+    batch.error_text = "\n".join(warnings) if warnings else None
     batch.finished_at = datetime.utcnow()
     await session.commit()
 
     return ImportSummary(
         batch_id=batch.id,
         total_rows=result.total_rows,
-        parsed_matches=len(result.matches),
+        parsed_matches=len(unique_matches),
         inserted_matches=inserted,
         updated_matches=updated_count,
         missing_matches=len(missing_matches),
@@ -272,7 +279,7 @@ async def import_parse_result(
         cancelled_signals=cancelled,
         scheduled_by_group=dict(scheduled_by_group),
         rejection_reasons=dict(rejection_reasons),
-        warnings=result.warnings,
+        warnings=warnings,
     )
 
 

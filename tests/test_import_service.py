@@ -3,10 +3,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func, select
+import app.services.import_service as import_service
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import app.services.import_service as import_service
-from app.database.models import Base, ScheduledSignal, SignalResult
+from app.database.models import Base, Match, MatchSnapshot, ScheduledSignal, SignalDecisionLog, SignalResult
 from app.services.excel_parser import ParsedMatch, ParseResult
 from app.services.import_service import import_parse_result
 
@@ -130,5 +130,95 @@ async def test_import_parse_result_can_store_past_due_signal_for_history(monkeyp
     assert signal_result is not None
     assert signal_result.status == "won"
     assert signal_result.source == "auto"
+
+    await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_import_parse_result_deduplicates_same_external_match_id(monkeypatch) -> None:
+    monkeypatch.setattr(import_service, "datetime", FrozenDateTime)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    first = ParsedMatch(
+        external_match_id=2001,
+        external_tournament_id=3001,
+        source_url="https://example.test/tournaments/3001/2001",
+        tournament_date="27.07.2026",
+        tournament_name="Тест",
+        match_time="14:00",
+        match_start_at=datetime(2030, 7, 27, 14, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+        player_1="Игрок A",
+        player_2="Игрок B",
+        player_1_rating=None,
+        player_2_rating=None,
+        score=None,
+        raw_data={
+            "CP": 5,
+            "Q": 7,
+            "X": 7,
+            "CV": 90,
+            "CW": 10,
+            "DG": 8,
+            "DH": 0,
+            "EG": 0,
+            "EH": 0,
+            "CS": 0,
+            "CT": 0,
+        },
+    )
+    second = ParsedMatch(
+        external_match_id=2001,
+        external_tournament_id=3001,
+        source_url="https://example.test/tournaments/3001/2001",
+        tournament_date="27.07.2026",
+        tournament_name="Тест",
+        match_time="14:00",
+        match_start_at=datetime(2030, 7, 27, 14, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+        player_1="Игрок A2",
+        player_2="Игрок B2",
+        player_1_rating=None,
+        player_2_rating=None,
+        score="3:1",
+        raw_data={
+            "CP": 5,
+            "Q": 7,
+            "X": 7,
+            "CV": 90,
+            "CW": 10,
+            "DG": 8,
+            "DH": 0,
+            "EG": 0,
+            "EH": 0,
+            "CS": 0,
+            "CT": 0,
+        },
+    )
+    result = ParseResult(sheet_name="Лист", total_rows=2, matches=[first, second], warnings=[])
+
+    async with factory() as session:
+        summary = await import_parse_result(
+            session,
+            result,
+            original_name="google duplicate",
+            stored_path="google-sheets://test/duplicate",
+            file_hash="hash-duplicate",
+            uploaded_by=1,
+            mark_missing=False,
+            past_due_signal_action="store_sent",
+        )
+        match = await session.scalar(select(Match))
+        snapshot_count = int(await session.scalar(select(func.count(MatchSnapshot.id))) or 0)
+        log_count = int(await session.scalar(select(func.count(SignalDecisionLog.id))) or 0)
+        signal_count = int(await session.scalar(select(func.count(ScheduledSignal.id))) or 0)
+
+    assert summary.parsed_matches == 1
+    assert summary.scheduled_signals == 1
+    assert match is not None
+    assert match.player_1 == "Игрок A2"
+    assert snapshot_count == 1
+    assert log_count == 1
+    assert signal_count == 1
 
     await engine.dispose()
