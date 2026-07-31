@@ -141,14 +141,30 @@ def format_public_results(
         [(signal.signal_payload, result.status) for signal, _, result in visible_rows],
         total_sent=min(total_sent, len(visible_rows)),
     )
+    correction = {
+        "won": max(int(get_settings().stats_correction_won), 0),
+        "lost": max(int(get_settings().stats_correction_lost), 0),
+        "void": max(int(get_settings().stats_correction_void), 0),
+        "unknown": max(int(get_settings().stats_correction_unknown), 0),
+    }
+    correction_total = sum(correction.values())
+    official_won = max(summary.overall.won - correction["won"], 0)
+    official_lost = max(summary.overall.lost - correction["lost"], 0)
+    official_void = max(summary.overall.void - correction["void"], 0)
+    official_unknown = max(summary.overall.unknown - correction["unknown"], 0)
+    official_total = max(summary.total_sent - correction_total, 0)
+    official_evaluated = official_won + official_lost + official_void + official_unknown
+    official_winrate = None
+    if official_won + official_lost:
+        official_winrate = official_won / (official_won + official_lost) * 100
     lines = [
         "🏆 Результаты сигналов",
         "",
-        f"Оценено: {summary.evaluated} из {summary.total_sent}",
-        f"✅ Зашло: {summary.overall.won}",
-        f"❌ Не зашло: {summary.overall.lost}",
-        f"↩️ Возврат: {summary.overall.void}",
-        f"Процент захода: {format_winrate(summary.overall.winrate)}",
+        f"Оценено: {official_evaluated} из {official_total}",
+        f"✅ Зашло: {official_won}",
+        f"❌ Не зашло: {official_lost}",
+        f"↩️ Возврат: {official_void}",
+        f"Процент захода: {format_winrate(official_winrate)}",
         "",
         "Последние результаты:",
     ]
