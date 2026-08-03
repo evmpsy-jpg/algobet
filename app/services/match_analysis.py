@@ -119,6 +119,8 @@ def _match_data(match: Match) -> MatchData:
         set1_handicap=get("DS"),
         set2_handicap=get("DV"),
         set3_handicap=get("DY"),
+        set4_handicap=get("EB"),
+        set5_handicap=get("EE"),
         raw_data=raw_data,
     )
 
@@ -165,6 +167,8 @@ def _number_or_none(value: Any) -> float | None:
 
 def _set_advantage_line(index: int, value: Any) -> str:
     number = _number_or_none(value)
+    if number is None:
+        return f"{index}️⃣ Сет:"
     formatted = _fmt_number(value, signed=True)
     if number is None or abs(number) <= 2.2:
         suffix = "нет явного преимущества"
@@ -307,6 +311,8 @@ def build_match_analysis_text(match: Match) -> str:
     set1 = data.set1_handicap
     set2 = data.set2_handicap
     set3 = data.set3_handicap
+    set4 = data.set4_handicap
+    set5 = data.set5_handicap
     average_h2h_handicap = _flipped_value(data.average_h2h_handicap, side)
     average_difference = _flipped_value(data.average_difference, side)
 
@@ -334,6 +340,8 @@ def build_match_analysis_text(match: Match) -> str:
         _set_advantage_line(1, set1),
         _set_advantage_line(2, set2),
         _set_advantage_line(3, set3),
+        _set_advantage_line(4, set4),
+        _set_advantage_line(5, set5),
         "",
         "🔥 Средняя разница относительно фаворита:",
         f" {_fmt_number(average_difference, signed=True)} очков.",
