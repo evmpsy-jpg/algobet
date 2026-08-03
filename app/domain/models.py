@@ -42,6 +42,8 @@ class MatchData:
     set1_handicap: float | None = None
     set2_handicap: float | None = None
     set3_handicap: float | None = None
+    set4_handicap: float | None = None
+    set5_handicap: float | None = None
 
     raw_data: dict[str, Any] = field(default_factory=dict)
 
@@ -83,6 +85,12 @@ class Signal:
     match_time: str
     player_1: str
     player_2: str
+    player_1_rating: int | None
+    player_2_rating: int | None
+    probability_p1: float | None
+    probability_p2: float | None
+    favorite_form_p1: float | None
+    favorite_form_p2: float | None
     selected_player: str
     side: int
     probability: float | None
@@ -97,4 +105,6 @@ class Signal:
     set1_handicap: float | None
     set2_handicap: float | None
     set3_handicap: float | None
+    set4_handicap: float | None
+    set5_handicap: float | None
     lead_minutes: int

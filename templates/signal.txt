@@ -1,4 +1,4 @@
-{title}
+🎯 СИГНАЛ — НА СЕТ
 ━━━━━━━━━━━━━━━━━━━━
 
 ⏳ Через {lead_minutes} минут
@@ -6,35 +6,34 @@
 🏓 {tournament_line}
 🕐 Начало: {match_time} МСК
 
-📌 {player_1}
-⚔️
-{player_2}
-
-{signal_marker} Вероятность: {probability}%
-{signal_marker} Форма фаворита: {favorite_form}%
+📌 {player_1_line} ⚔️ {player_2_line}
 
 👉 Ставка на сет:
 {selected_player}
 
 ━━━━━━━━━━━━━━━━━━━━
 
+Вероятность: {probability_p1}% ⚔️ {probability_p2}%
+Форма фаворита: {favorite_form_p1}% ⚔️ {favorite_form_p2}%
+
+
 🏓 Фора по мячам за последние 5 H2H
-относительно первого игрока:
 
 1️⃣ Сет: {set1_handicap}
 2️⃣ Сет: {set2_handicap}
 3️⃣ Сет: {set3_handicap}
+4️⃣ Сет: {set4_handicap}
+5️⃣ Сет: {set5_handicap}
+🔥 Средняя разница:
+{average_difference} очков
 
 ━━━━━━━━━━━━━━━━━━━━
 
 📊 Общая статистика H2H
 
-Победы: {h2h_p1} / {h2h_p2}
+Победы: {h2h_p1} / {h2h_p2} ({h2h_games} игр в H2H)
 
-📈 Средняя фора:
-{average_h2h_handicap} ({h2h_games} игр в H2H)
-
-🔥 Средняя разница:
-{average_difference} очков ({recent_h2h_wins}/{recent_h2h_total} в H2H)
+📈 Средняя фора Фаворита:
+{average_h2h_handicap}
 
 ━━━━━━━━━━━━━━━━━━━━

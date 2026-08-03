@@ -61,5 +61,7 @@ def normalize_match(parsed: ParsedMatch) -> MatchData:
         set1_handicap=get("set1_handicap"),
         set2_handicap=get("set2_handicap"),
         set3_handicap=get("set3_handicap"),
+        set4_handicap=get("set4_handicap"),
+        set5_handicap=get("set5_handicap"),
         raw_data=parsed.raw_data,
     )

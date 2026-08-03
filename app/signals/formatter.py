@@ -27,6 +27,10 @@ def _tournament_line(name: str) -> str:
     return f"{parts[0]} • {parts[1]}" if len(parts) > 1 and parts[1] else parts[0]
 
 
+def _player_with_rating(name: str, rating: int | None) -> str:
+    return f"({rating}) {name}" if rating else name
+
+
 def format_signal(signal: Signal) -> str:
     path = Path("templates/signal.txt")
     if not path.exists():
@@ -40,13 +44,21 @@ def format_signal(signal: Signal) -> str:
         "match_time": signal.match_time,
         "player_1": signal.player_1,
         "player_2": signal.player_2,
+        "player_1_line": _player_with_rating(signal.player_1, signal.player_1_rating),
+        "player_2_line": _player_with_rating(signal.player_2, signal.player_2_rating),
         "signal_marker": signal_marker,
         "probability": _fmt(signal.probability, 0),
+        "probability_p1": _fmt(signal.probability_p1, 0),
+        "probability_p2": _fmt(signal.probability_p2, 0),
         "favorite_form": _fmt(signal.favorite_form, 0),
+        "favorite_form_p1": _fmt(signal.favorite_form_p1, 0),
+        "favorite_form_p2": _fmt(signal.favorite_form_p2, 0),
         "selected_player": signal.selected_player,
         "set1_handicap": _fmt(signal.set1_handicap, 1, True),
         "set2_handicap": _fmt(signal.set2_handicap, 1, True),
         "set3_handicap": _fmt(signal.set3_handicap, 1, True),
+        "set4_handicap": _fmt(signal.set4_handicap, 1, True) if signal.set4_handicap is not None else "",
+        "set5_handicap": _fmt(signal.set5_handicap, 1, True) if signal.set5_handicap is not None else "",
         "h2h_p1": _fmt(signal.h2h_p1, 0),
         "h2h_p2": _fmt(signal.h2h_p2, 0),
         "average_h2h_handicap": _fmt(signal.average_h2h_handicap, 1, True),

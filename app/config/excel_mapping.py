@@ -30,6 +30,8 @@ DEFAULT_MAPPING: dict[str, str] = {
     "set1_handicap": "DS",
     "set2_handicap": "DV",
     "set3_handicap": "DY",
+    "set4_handicap": "EB",
+    "set5_handicap": "EE",
 }
 
 

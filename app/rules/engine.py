@@ -415,6 +415,8 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         "set1_handicap": match.set1_handicap,
         "set2_handicap": match.set2_handicap,
         "set3_handicap": match.set3_handicap,
+        "set4_handicap": match.set4_handicap,
+        "set5_handicap": match.set5_handicap,
         "decision_trace": [
             item.to_dict()
             for item in traces
