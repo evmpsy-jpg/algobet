@@ -304,9 +304,9 @@ def build_match_analysis_text(match: Match) -> str:
     data = _match_data(match)
     side = _pick_favorite_side(data)
     favorite_player = data.player_1 if side == 1 else data.player_2
-    set1 = _flipped_value(data.set1_handicap, side)
-    set2 = _flipped_value(data.set2_handicap, side)
-    set3 = _flipped_value(data.set3_handicap, side)
+    set1 = data.set1_handicap
+    set2 = data.set2_handicap
+    set3 = data.set3_handicap
     average_h2h_handicap = _flipped_value(data.average_h2h_handicap, side)
     average_difference = _flipped_value(data.average_difference, side)
 
@@ -330,7 +330,6 @@ def build_match_analysis_text(match: Match) -> str:
         "━━━━━━━━━━━━━━━━━━━━",
         "",
         "🏓 Фора по мячам за последние 5 H2H",
-        "относительно фаворита:",
         "",
         _set_advantage_line(1, set1),
         _set_advantage_line(2, set2),
