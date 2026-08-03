@@ -116,9 +116,9 @@ def _match_data(match: Match) -> MatchData:
         h2h_p2=get_first("AB", "P2"),
         average_h2h_handicap=get("AI"),
         average_difference=get("EF"),
-        set1_handicap=get("AM"),
-        set2_handicap=get("AN"),
-        set3_handicap=get("AO"),
+        set1_handicap=get("DS"),
+        set2_handicap=get("DV"),
+        set3_handicap=get("DY"),
         raw_data=raw_data,
     )
 
