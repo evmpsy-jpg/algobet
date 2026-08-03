@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -139,10 +139,6 @@ def _pick_favorite_side(match: MatchData) -> int:
     return 1
 
 
-def _selected_value(match: MatchData, side: int, p1_value: Any, p2_value: Any) -> Any:
-    return p1_value if side == 1 else p2_value
-
-
 def _flipped_value(value: Any, side: int) -> Any:
     if value is None:
         return None
@@ -276,19 +272,15 @@ async def create_match_analysis_request(
 def build_match_analysis_text(match: Match) -> str:
     data = _match_data(match)
     side = _pick_favorite_side(data)
-    probability = _selected_value(data, side, data.probability_p1, data.probability_p2)
-    favorite_form = _selected_value(data, side, data.favorite_form_p1, data.favorite_form_p2)
     favorite_player = data.player_1 if side == 1 else data.player_2
-    h2h_wins_favorite = _selected_value(data, side, data.h2h_p1, data.h2h_p2)
-    h2h_wins_opponent = _selected_value(data, side, data.h2h_p2, data.h2h_p1)
-    total_h2h = data.h2h_games
-    recent_h2h = _selected_value(data, side, data.p1_exact, data.p2_exact)
     set1 = _flipped_value(data.set1_handicap, side)
     set2 = _flipped_value(data.set2_handicap, side)
     set3 = _flipped_value(data.set3_handicap, side)
     average_h2h_handicap = _flipped_value(data.average_h2h_handicap, side)
     average_difference = _flipped_value(data.average_difference, side)
-    color = "🟢" if side == 1 else "🔴"
+
+    player_1 = f"({data.player_1_rating}) {data.player_1}" if data.player_1_rating else data.player_1
+    player_2 = f"({data.player_2_rating}) {data.player_2}" if data.player_2_rating else data.player_2
 
     lines = [
         "🎯 Анализ матча",
@@ -297,14 +289,12 @@ def build_match_analysis_text(match: Match) -> str:
         f"🏓 {_tournament_line(data.tournament_name)}",
         f"🕐 Начало: {_fmt_dt(data.match_start_at, '%H:%M')} МСК",
         "",
-        f"📌 {data.player_1}",
-        "⚔️",
-        f"{data.player_2}",
+        f"📌 {player_1} ⚔️ {player_2}",
         "",
-        f"{color} Вероятность: {_fmt_number(probability, signed=False, digits=0)}%",
-        f"{color} Форма фаворита: {_fmt_number(favorite_form, signed=False, digits=0)}%",
+        f" Вероятность: {_fmt_number(data.probability_p1, signed=False, digits=0)}% ⚔️   {_fmt_number(data.probability_p2, signed=False, digits=0)}%",
+        f" Форма фаворита: {_fmt_number(data.favorite_form_p1, signed=False, digits=0)}% ⚔️   {_fmt_number(data.favorite_form_p2, signed=False, digits=0)}%",
         "",
-        f"👉 Фаворит: {favorite_player}",
+        f"👉 Фаворит по игре:  {favorite_player}",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
@@ -315,22 +305,21 @@ def build_match_analysis_text(match: Match) -> str:
         f"2️⃣ Сет: {_fmt_number(set2, signed=True)}",
         f"3️⃣ Сет: {_fmt_number(set3, signed=True)}",
         "",
+        "🔥 Средняя разница относительно фаворита:",
+        f" {_fmt_number(average_difference, signed=True)} очков",
+        "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
         "📊 Общая статистика H2H",
         "",
-        f"Победы: {_fmt_number(h2h_wins_favorite, signed=False, digits=0)} / {_fmt_number(h2h_wins_opponent, signed=False, digits=0)}",
+        f"Победы: {_fmt_number(data.h2h_p1, signed=False, digits=0)} ⚔️  {_fmt_number(data.h2h_p2, signed=False, digits=0)}",
         "",
         "📈 Средняя фора относительно фаворита:",
-        f"{_fmt_number(average_h2h_handicap, signed=True)} ({_fmt_number(total_h2h, signed=False, digits=0)} игр в H2H)",
-        "",
-        "🔥 Средняя разница относительно фаворита:",
-        f"{_fmt_number(average_difference, signed=True)} очков ({_fmt_number(recent_h2h, signed=False, digits=0)}/5 в H2H)",
+        f"{_fmt_number(average_h2h_handicap, signed=True)} ({_fmt_number(data.h2h_games, signed=False, digits=0)} игр в H2H)",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
     ]
     return "\n".join(lines)[:3900]
-
 
 def format_analysis_status_user_text(request: MatchAnalysisRequest) -> str:
     status_messages = {
