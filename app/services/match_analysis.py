@@ -203,6 +203,8 @@ def format_upcoming_matches_text(matches: list[Match]) -> str:
     lines = [
         "🔎 Анализ матча",
         "",
+        "Стоимость 100 руб.",
+        "",
         "Выберите один из ближайших матчей:",
     ]
     if not matches:
