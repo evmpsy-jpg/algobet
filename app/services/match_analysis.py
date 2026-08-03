@@ -234,7 +234,7 @@ def format_analysis_payment_admin_text(request: MatchAnalysisRequest, user: User
     name_parts = [item for item in [user.first_name, user.last_name] if item]
     name = " ".join(name_parts) if name_parts else "—"
     lines = [
-        "💳 Оплата по анализу матча",
+        "💳 Клиент оплатил заявку на анализ матча",
         "",
         f"Заявка: #{request.id}",
         f"Пользователь: {name}",
@@ -244,7 +244,7 @@ def format_analysis_payment_admin_text(request: MatchAnalysisRequest, user: User
         "Матч:",
         request.match_title or request.match_text,
         "",
-        "Нажмите кнопку ниже, чтобы выдать анализ клиенту.",
+        "Нажмите кнопку ниже, чтобы отправить анализ клиенту.",
     ]
     return "\n".join(lines)[:3900]
 

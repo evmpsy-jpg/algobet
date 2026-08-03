@@ -2096,9 +2096,18 @@ async def analysis_status_callback(callback: CallbackQuery) -> None:
 async def analysis_issue_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id) or not callback.data:
         return
-    _, _, request_id_raw, list_status, page_raw = callback.data.split(":")
+    parts = callback.data.split(":")
+    if len(parts) == 3:
+        _, _, request_id_raw = parts
+        list_status = "paid"
+        page = 0
+    elif len(parts) == 5:
+        _, _, request_id_raw, list_status, page_raw = parts
+        page = int(page_raw)
+    else:
+        await callback.answer("Неизвестная команда", show_alert=True)
+        return
     request_id = int(request_id_raw)
-    page = int(page_raw)
     async with SessionFactory() as session:
         request = await session.get(MatchAnalysisRequest, request_id)
         if request is None:

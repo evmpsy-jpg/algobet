@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import desc, func, select
 
 from app.settings import get_settings
-from app.database.models import ImportBatch, Match, ScheduledSignal, SignalDecisionLog, SignalResult, User, UserAccess
+from app.database.models import ImportBatch, Match, MatchAnalysisRequest, ScheduledSignal, SignalDecisionLog, SignalResult, User, UserAccess
 from app.database.session import SessionFactory
 from app.keyboards.common import main_menu
 from app.services.access import has_analytics_access, has_signal_access, ensure_trial_access
