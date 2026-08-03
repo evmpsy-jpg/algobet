@@ -578,7 +578,7 @@ async def match_analysis_handler(message: Message) -> None:
         return
     async with SessionFactory() as session:
         matches = await get_upcoming_matches(session, limit=10)
-    await message.answer(format_upcoming_matches_text(matches), reply_markup=analysis_matches_keyboard(matches))
+    await message.answer(format_upcoming_matches_text(matches), reply_markup=analysis_matches_keyboard(matches), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "an:menu")
