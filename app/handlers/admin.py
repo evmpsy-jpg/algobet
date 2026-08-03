@@ -2135,6 +2135,13 @@ async def analysis_issue_callback(callback: CallbackQuery) -> None:
     await show_analysis_detail(callback, request_id, list_status, page)
 
 
+@router.message(F.text == "👥 Пользователи")
+async def users_message_handler(message: Message) -> None:
+    if not is_admin_user(message.from_user.id):
+        return
+    await show_users_list(message, 0)
+
+
 @router.callback_query(F.data.startswith("usr:list:"))
 async def users_list_callback(callback: CallbackQuery) -> None:
     if not is_admin_user(callback.from_user.id) or not callback.data:
