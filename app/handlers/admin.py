@@ -32,7 +32,7 @@ from app.services.dashboard import SignalListItem, collect_import_signal_schedul
 from app.services.decision_log import record_decision_log
 from app.services.excel_parser import ParsedMatch
 from app.services.import_service import import_tournaments, to_utc_naive
-from app.services.match_analysis import format_analysis_status_user_text
+from app.services.match_analysis import build_match_analysis_text, format_analysis_status_user_text
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
@@ -1223,6 +1223,8 @@ def format_admin_statistics_text(
     official_unknown = max(result_summary.overall.unknown - correction_unknown, 0)
     official_total = max(stats_total - correction_total, 0)
     official_evaluated = official_won + official_lost + official_void + official_unknown
+    if official_evaluated > official_total:
+        official_total = official_evaluated
     official_unrated = max(official_total - official_evaluated, 0)
     official_winrate = None
     if official_won + official_lost:
@@ -1599,14 +1601,20 @@ def analysis_list_keyboard(
     rows.append([InlineKeyboardButton(text="⬅️ К заявкам", callback_data="an:dashboard")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def analysis_detail_keyboard(request_id: int, current_status: str, list_status: str, page: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if current_status in {"new", "paid"}:
         rows.append([
             InlineKeyboardButton(
-                text="🛠 Взять в работу",
+                text="📝 Взять в работу",
                 callback_data=f"an:work:{request_id}:{list_status}:{page}",
+            )
+        ])
+    if current_status in {"paid", "in_progress"}:
+        rows.append([
+            InlineKeyboardButton(
+                text="📤 Выдать анализ клиенту",
+                callback_data=f"an:issue:{request_id}:{list_status}:{page}",
             )
         ])
     status_buttons: list[InlineKeyboardButton] = []
@@ -1628,8 +1636,8 @@ def analysis_detail_keyboard(request_id: int, current_status: str, list_status: 
 
 
 def format_analysis_request_detail(request: MatchAnalysisRequest, user: User | None) -> str:
-    username = f"@{request.username}" if request.username else "—"
-    name = _user_name(user) if user else (request.username or "—")
+    username = f"@{request.username}" if request.username else "?"
+    name = _user_name(user) if user else (request.username or "?")
     return (
         f"🔎 Заявка на анализ #{request.id}\n\n"
         f"Статус: {_analysis_status_label(request.status)}\n"
@@ -1638,10 +1646,11 @@ def format_analysis_request_detail(request: MatchAnalysisRequest, user: User | N
         f"Пользователь: {name}\n"
         f"ID Telegram: {request.telegram_id}\n"
         f"Имя пользователя: {username}\n\n"
-        f"Матч:\n{request.match_text}\n\n"
-        f"Реквизиты: {request.payment_details or '—'}\n"
-        f"Специалист: {request.specialist_contact or '—'}"
+        f"Матч:\n{request.match_title or request.match_text}\n\n"
+        f"Оплата: {request.payment_details or '?'}\n"
+        f"Контакт: {request.specialist_contact or '?'}"
     )
+
 
 
 async def show_analysis_dashboard(target: Message | CallbackQuery) -> None:
@@ -2081,10 +2090,6 @@ async def analysis_status_callback(callback: CallbackQuery) -> None:
         previous_status = request.status
         request.status = new_status
         request.updated_at = datetime.utcnow()
-        if previous_status != new_status:
-            status_text = format_analysis_status_user_text(request)
-            user_telegram_id = request.telegram_id
-        await session.commit()
     if status_text and user_telegram_id is not None:
         try:
             await callback.bot.send_message(chat_id=user_telegram_id, text=status_text)
@@ -2094,11 +2099,36 @@ async def analysis_status_callback(callback: CallbackQuery) -> None:
     await show_analysis_detail(callback, request_id, list_status, page)
 
 
-@router.message(F.text == "👥 Пользователи")
-async def users_info(message: Message) -> None:
-    if not is_admin(message):
+@router.callback_query(F.data.startswith("an:issue:"))
+async def analysis_issue_callback(callback: CallbackQuery) -> None:
+    if not is_admin_user(callback.from_user.id) or not callback.data:
         return
-    await show_users_list(message)
+    _, _, request_id_raw, list_status, page_raw = callback.data.split(":")
+    request_id = int(request_id_raw)
+    page = int(page_raw)
+    request_id = int(request_id_raw)
+    async with SessionFactory() as session:
+        request = await session.get(MatchAnalysisRequest, request_id)
+        if request is None:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        match = await session.get(Match, request.match_id) if request.match_id is not None else None
+        if match is None:
+            await callback.answer("Матч не найден", show_alert=True)
+            return
+        request.updated_at = datetime.utcnow()
+        user_telegram_id = request.telegram_id
+        analysis_text = build_match_analysis_text(match)
+        await session.commit()
+    try:
+        await callback.bot.send_message(chat_id=user_telegram_id, text=analysis_text)
+    except Exception:
+        await callback.answer("Не удалось отправить анализ клиенту", show_alert=True)
+        return
+    await callback.answer("Анализ выдан клиенту", show_alert=True)
+    await show_analysis_detail(callback, request_id, list_status, page)
+
+
 
 
 @router.callback_query(F.data.startswith("usr:list:"))

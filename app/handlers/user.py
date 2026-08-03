@@ -17,7 +17,15 @@ from app.keyboards.common import main_menu
 from app.services.access import has_analytics_access, has_signal_access, ensure_trial_access
 from app.services.admin_notifications import notify_admins
 from app.services.bot_settings import get_analysis_payment_config
-from app.services.match_analysis import create_match_analysis_request, format_analysis_request_admin_text, format_analysis_request_user_text, validate_match_analysis_text
+from app.services.match_analysis import (
+    create_match_analysis_request,
+    format_analysis_payment_admin_text,
+    format_analysis_payment_text,
+    format_analysis_request_admin_text,
+    format_analysis_request_user_text,
+    format_upcoming_matches_text,
+    get_upcoming_matches,
+)
 from app.services.signal_results import format_winrate, result_short_label, signal_stats_eligible, summarize_results
 from app.services.stake_calculator import STEP_OPTIONS, format_step_stake_calculator, parse_bank, parse_step
 from app.services.subscriptions import (
@@ -37,9 +45,6 @@ class CalculatorStates(StatesGroup):
     waiting_for_bank = State()
     waiting_for_step = State()
 
-
-class MatchAnalysisStates(StatesGroup):
-    waiting_for_match = State()
 
 
 WELCOME_MESSAGES = (
@@ -154,6 +159,8 @@ def format_public_results(
     official_unknown = max(summary.overall.unknown - correction["unknown"], 0)
     official_total = max(summary.total_sent - correction_total, 0)
     official_evaluated = official_won + official_lost + official_void + official_unknown
+    if official_evaluated > official_total:
+        official_total = official_evaluated
     official_winrate = None
     if official_won + official_lost:
         official_winrate = official_won / (official_won + official_lost) * 100
@@ -541,47 +548,80 @@ def calculator_step_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def analysis_matches_keyboard(matches: list[Match]) -> InlineKeyboardMarkup:
+    rows = []
+    for match in matches:
+        time_text = _fmt_dt(match.match_start_at, '%H:%M')
+        button_text = f"{time_text} · {match.player_1} — {match.player_2}"
+        rows.append([InlineKeyboardButton(text=button_text[:64], callback_data=f"an:pick:{match.id}")])
+    if matches:
+        rows.append([InlineKeyboardButton(text="⬅️ Вернуться в главное меню", callback_data="an:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def analysis_payment_keyboard(request_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"an:paid:{request_id}")],
+        [InlineKeyboardButton(text="⬅️ Вернуться в главное меню", callback_data="an:menu")],
+    ])
+
+
+def analysis_issue_keyboard(request_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Выдать анализ клиенту", callback_data=f"an:issue:{request_id}")],
+    ])
+
+
 @router.message(F.text == "🔎 Анализ матча")
-async def match_analysis_handler(message: Message, state: FSMContext) -> None:
-    await state.set_state(MatchAnalysisStates.waiting_for_match)
-    await message.answer(
-        "🔎 Напишите, какой матч хотите проанализировать.\n\n"
-        "Можно указать игроков, турнир, время матча и ссылку, если она есть."
-    )
-
-
-@router.message(MatchAnalysisStates.waiting_for_match)
-async def match_analysis_text_handler(message: Message, state: FSMContext) -> None:
+async def match_analysis_handler(message: Message) -> None:
     if message.from_user is None:
         return
-    settings = get_settings()
-    try:
-        match_text = validate_match_analysis_text(message.text or "")
-    except ValueError as exc:
-        await message.answer(str(exc))
-        return
-
     async with SessionFactory() as session:
-        user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
+        matches = await get_upcoming_matches(session, limit=10)
+    await message.answer(format_upcoming_matches_text(matches), reply_markup=analysis_matches_keyboard(matches))
+
+
+@router.callback_query(F.data == "an:menu")
+async def analysis_menu_callback(callback: CallbackQuery) -> None:
+    is_admin = bool(callback.from_user and callback.from_user.id in get_settings().admin_ids)
+    if callback.message:
+        await callback.message.answer("Главное меню", reply_markup=main_menu(is_admin=is_admin))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("an:pick:"))
+async def analysis_pick_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.data is None:
+        return
+    _, _, match_id_raw = callback.data.split(":")
+    settings = get_settings()
+    async with SessionFactory() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == callback.from_user.id))
         if user is None:
             user = User(
-                telegram_id=message.from_user.id,
-                username=message.from_user.username,
-                first_name=message.from_user.first_name,
-                last_name=message.from_user.last_name,
+                telegram_id=callback.from_user.id,
+                username=callback.from_user.username,
+                first_name=callback.from_user.first_name,
+                last_name=callback.from_user.last_name,
             )
             session.add(user)
             await session.flush()
         else:
-            user.username = message.from_user.username
-            user.first_name = message.from_user.first_name
-            user.last_name = message.from_user.last_name
+            user.username = callback.from_user.username
+            user.first_name = callback.from_user.first_name
+            user.last_name = callback.from_user.last_name
             user.is_active = True
+
+        match = await session.get(Match, int(match_id_raw))
+        if match is None:
+            await callback.answer("Матч не найден", show_alert=True)
+            return
+
         payment_config = await get_analysis_payment_config(session)
         request = await create_match_analysis_request(
             session,
             user,
-            match_text,
+            match,
             payment_details=payment_config.payment_details,
             specialist_contact=payment_config.specialist_contact,
         )
@@ -589,9 +629,42 @@ async def match_analysis_text_handler(message: Message, state: FSMContext) -> No
         admin_text = format_analysis_request_admin_text(request, user)
         await session.commit()
 
-    await state.clear()
-    await message.answer(user_text)
-    await notify_admins(message.bot, settings.admin_ids, admin_text)
+    if callback.message:
+        await callback.message.edit_text(user_text, reply_markup=analysis_payment_keyboard(request.id))
+    await notify_admins(callback.bot, settings.admin_ids, admin_text)
+    await callback.answer("Заявка создана", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("an:paid:"))
+async def analysis_paid_callback(callback: CallbackQuery) -> None:
+    if callback.from_user is None or callback.data is None:
+        return
+    _, _, request_id_raw = callback.data.split(":")
+    request_id = int(request_id_raw)
+    settings = get_settings()
+    async with SessionFactory() as session:
+        request = await session.get(MatchAnalysisRequest, request_id)
+        if request is None:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        if request.telegram_id != callback.from_user.id:
+            await callback.answer("Вы уже оплатили", show_alert=True)
+            return
+        user = await session.scalar(select(User).where(User.id == request.user_id))
+        if user is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        request.status = "paid"
+        request.updated_at = datetime.utcnow()
+        admin_text = format_analysis_payment_admin_text(request, user)
+        user_text = format_analysis_payment_text(request)
+        await session.commit()
+
+    if callback.message:
+        await callback.message.edit_text(user_text, reply_markup=analysis_payment_keyboard(request.id))
+    await notify_admins(callback.bot, settings.admin_ids, admin_text, reply_markup=analysis_issue_keyboard(request.id))
+    await callback.answer("Оплата подтверждена", show_alert=True)
+
 
 @router.message(F.text == "🧮 Калькулятор")
 async def calculator_handler(message: Message, state: FSMContext) -> None:

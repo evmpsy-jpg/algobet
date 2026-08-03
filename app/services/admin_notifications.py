@@ -17,12 +17,13 @@ async def notify_admins(
     text: str,
     *,
     exclude_ids: Iterable[int] = (),
+    reply_markup: object | None = None,
 ) -> int:
     excluded = set(exclude_ids)
     delivered = 0
     for admin_id in dict.fromkeys(int(item) for item in admin_ids if int(item) not in excluded):
         try:
-            await bot.send_message(chat_id=admin_id, text=text, disable_web_page_preview=True)
+            await bot.send_message(chat_id=admin_id, text=text, disable_web_page_preview=True, reply_markup=reply_markup)
         except Exception as exc:
             logger.warning("Не удалось отправить уведомление админу %s: %s", admin_id, exc)
         else:
