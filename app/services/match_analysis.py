@@ -78,6 +78,12 @@ def _match_data(match: Match) -> MatchData:
         except (TypeError, ValueError):
             return None
 
+    def get_first(*fields: str) -> float | None:
+        for field in fields:
+            value = get(field)
+            if value is not None:
+                return value
+        return None
     return MatchData(
         match_id=match.external_match_id,
         tournament_id=match.external_tournament_id,
@@ -106,8 +112,8 @@ def _match_data(match: Match) -> MatchData:
         p2_exact=get("EH"),
         p1_range=get("CS"),
         p2_range=get("CT"),
-        h2h_p1=get("P1"),
-        h2h_p2=get("P2"),
+        h2h_p1=get_first("AA", "P1"),
+        h2h_p2=get_first("AB", "P2"),
         average_h2h_handicap=get("AI"),
         average_difference=get("EF"),
         set1_handicap=get("AM"),
