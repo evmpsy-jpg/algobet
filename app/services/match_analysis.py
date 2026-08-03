@@ -154,6 +154,31 @@ def _flipped_value(value: Any, side: int) -> Any:
         return value
     return number if side == 1 else -number
 
+def _number_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _set_advantage_line(index: int, value: Any) -> str:
+    number = _number_or_none(value)
+    formatted = _fmt_number(value, signed=True)
+    if number is None or abs(number) <= 2.2:
+        suffix = "нет явного преимущества"
+    else:
+        side = "П1" if number > 0 else "П2"
+        suffix = f"явное преимущество {side}"
+    return f"{index}️⃣ Сет: {formatted} - {suffix}"
+
+
+def _has_no_clear_favorite(value: Any) -> bool:
+    number = _number_or_none(value)
+    return number is not None and abs(number) < 2
+
+
 
 def _match_title(match: Match) -> str:
     return f"{_fmt_dt(match.match_start_at, '%d.%m %H:%M')} · {match.player_1} — {match.player_2}"
@@ -307,12 +332,12 @@ def build_match_analysis_text(match: Match) -> str:
         "🏓 Фора по мячам за последние 5 H2H",
         "относительно фаворита:",
         "",
-        f"1️⃣ Сет: {_fmt_number(set1, signed=True)}",
-        f"2️⃣ Сет: {_fmt_number(set2, signed=True)}",
-        f"3️⃣ Сет: {_fmt_number(set3, signed=True)}",
+        _set_advantage_line(1, set1),
+        _set_advantage_line(2, set2),
+        _set_advantage_line(3, set3),
         "",
         "🔥 Средняя разница относительно фаворита:",
-        f" {_fmt_number(average_difference, signed=True)} очков",
+        f" {_fmt_number(average_difference, signed=True)} очков.",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
@@ -325,6 +350,8 @@ def build_match_analysis_text(match: Match) -> str:
         "",
         "━━━━━━━━━━━━━━━━━━━━",
     ]
+    if _has_no_clear_favorite(average_difference):
+        lines.extend(["", "Нет явного фаворита."])
     return "\n".join(lines)[:3900]
 
 def format_analysis_status_user_text(request: MatchAnalysisRequest) -> str:
