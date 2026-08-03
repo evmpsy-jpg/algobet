@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     web_admin_username: str = Field(default="", alias="WEB_ADMIN_USERNAME")
     web_admin_password: str = Field(default="", alias="WEB_ADMIN_PASSWORD")
     web_admin_superusers_text: str = Field(default="", alias="WEB_ADMIN_SUPERUSERS")
+    web_admin_port: int = Field(default=8000, alias="WEB_ADMIN_PORT")
     analysis_payment_details: str = Field(default="Реквизиты для оплаты уточните у специалиста.", alias="ANALYSIS_PAYMENT_DETAILS")
     analysis_specialist_contact: str = Field(default="@your_specialist", alias="ANALYSIS_SPECIALIST_CONTACT")
     subscription_payment_details: str = Field(default="Реквизиты для оплаты уточните у специалиста.", alias="SUBSCRIPTION_PAYMENT_DETAILS")
