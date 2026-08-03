@@ -113,15 +113,17 @@ async def _refresh_signal_from_current_match(session: AsyncSession, signal: Sche
 
     new_payload = decision.payload or {}
     old_payload = signal.signal_payload or {}
+    new_message_text = build_signal_message(parsed, decision)
     if (
         old_payload.get("side") != new_payload.get("side")
         or old_payload.get("signal_group") != new_payload.get("signal_group")
         or old_payload.get("probability") != new_payload.get("probability")
         or signal.signal_type != decision.signal_type
+        or signal.message_text != new_message_text
     ):
         signal.signal_payload = new_payload
         signal.signal_type = decision.signal_type
-        signal.message_text = build_signal_message(parsed, decision)
+        signal.message_text = new_message_text
     return True
 
 async def _process_signals(
@@ -174,6 +176,7 @@ async def _process_signals(
                 await bot.send_message(
                     chat_id=user.telegram_id,
                     text=signal.message_text,
+                    parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception as exc:
@@ -284,6 +287,7 @@ async def process_delivery_now(
         await bot.send_message(
             chat_id=user.telegram_id,
             text=signal.message_text,
+            parse_mode="HTML",
             disable_web_page_preview=True,
         )
     except Exception as exc:

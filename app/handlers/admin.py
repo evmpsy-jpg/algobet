@@ -846,6 +846,7 @@ async def signal_view_callback(callback: CallbackQuery) -> None:
         text,
         reply_markup=signal_detail_keyboard(signal.id, status, page),
         disable_web_page_preview=True,
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -937,7 +938,7 @@ async def signal_preview_callback(callback: CallbackQuery) -> None:
     if signal is None or not signal.message_text:
         await callback.answer("Текст сигнала не найден", show_alert=True)
         return
-    await callback.message.answer("🧪 Тестовая отправка администратору:\n\n" + signal.message_text)
+    await callback.message.answer("🧪 Тестовая отправка администратору:\n\n" + signal.message_text, parse_mode="HTML")
     await callback.answer("Отправлено вам. Статус сигнала не изменён.")
 
 

@@ -1,39 +1,36 @@
-🎯 СИГНАЛ — НА СЕТ
+🎯 <b>СИГНАЛ — НА СЕТ</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-⏳ Через {lead_minutes} минут
+⏳ <b>Старт:</b> Через {lead_minutes} минут ({match_time} МСК)
+🏓 <b>Турнир:</b> {tournament_line}
+📌 <b>Матч:</b> {player_1_line} ⚔️ {player_2_line}
 
-🏓 {tournament_line}
-🕐 Начало: {match_time} МСК
+👉 <b>Выбор:</b> Победа в сете - <b>{selected_player}</b>
 
-📌 {player_1_line} ⚔️ {player_2_line}
-
-👉 Ставка на сет:
-{selected_player}
 
 ━━━━━━━━━━━━━━━━━━━━
 
-Вероятность: {probability_p1}% ⚔️ {probability_p2}%
-Форма фаворита: {favorite_form_p1}% ⚔️ {favorite_form_p2}%
+<b>Вероятность и Форма</b>
+
+ <b>Математическая вероятность исхода:</b> {probability_p1}% ⚔️ {probability_p2}%
+<b>Текущая форма игроков:</b> {favorite_form_p1}% ⚔️ {favorite_form_p2}%
 
 
-🏓 Фора по мячам за последние 5 H2H
+🏓 <b>Фора по мячам (Последние 5 H2H по сетам):</b>
 
 1️⃣ Сет: {set1_handicap}
 2️⃣ Сет: {set2_handicap}
 3️⃣ Сет: {set3_handicap}
 4️⃣ Сет: {set4_handicap}
 5️⃣ Сет: {set5_handicap}
-🔥 Средняя разница:
-{average_difference} очков
 
+🔥 <b>Средняя разница фаворита:</b> {average_difference} очков
 ━━━━━━━━━━━━━━━━━━━━
 
-📊 Общая статистика H2H
+📈 <b>Общая статистика личных встреч (H2H)</b>
 
-Победы: {h2h_p1} / {h2h_p2} ({h2h_games} игр в H2H)
+<b>Баланс побед:</b> {selected_h2h_wins} из {opponent_h2h_wins} (всего {h2h_games} матчей в истории)
 
-📈 Средняя фора Фаворита:
-{average_h2h_handicap}
+<b>Итоговая средняя фора Фаворита:</b> {average_h2h_handicap}
 
 ━━━━━━━━━━━━━━━━━━━━
