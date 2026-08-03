@@ -84,8 +84,10 @@ def create_sqlite_backup(database_url: str, data_dir: Path, *, keep: int = DEFAU
     created_at = datetime.now()
     destination = directory / f"{BACKUP_PREFIX}{created_at:%Y%m%d-%H%M%S}{BACKUP_SUFFIX}"
 
-    with sqlite3.connect(db_path) as source, sqlite3.connect(destination) as target:
-        source.backup(target)
+    with sqlite3.connect(db_path, timeout=30) as source, sqlite3.connect(destination, timeout=30) as target:
+        source.execute("PRAGMA busy_timeout = 30000")
+        target.execute("PRAGMA busy_timeout = 30000")
+        source.backup(target, pages=1000, sleep=0.05)
 
     deleted: list[Path] = []
     keep = max(1, keep)
