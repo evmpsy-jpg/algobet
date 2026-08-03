@@ -1715,7 +1715,8 @@ async def show_analysis_detail(callback: CallbackQuery, request_id: int, list_st
         await callback.answer("Заявка не найдена", show_alert=True)
         return
     request, user = row
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         format_analysis_request_detail(request, user),
         reply_markup=analysis_detail_keyboard(request.id, request.status, list_status, page),
     )
