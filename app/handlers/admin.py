@@ -44,6 +44,34 @@ from app.services.subscriptions import SUBSCRIPTION_STATUS_LABELS, format_price,
 router = Router(name="admin")
 
 
+
+async def _refresh_signal_message_from_match(session, signal: ScheduledSignal, match: Match | None = None) -> None:
+    if match is None:
+        match = await session.get(Match, signal.match_id)
+    if match is None or not match.raw_data:
+        return
+    raw = match.raw_data or {}
+    parsed = ParsedMatch(
+        external_match_id=match.external_match_id,
+        external_tournament_id=match.external_tournament_id,
+        source_url=match.source_url,
+        tournament_date=match.tournament_date,
+        tournament_name=str(raw.get("_tournament_name") or "Турнир"),
+        match_time=match.match_time,
+        match_start_at=match.match_start_at,
+        player_1=match.player_1,
+        player_2=match.player_2,
+        player_1_rating=match.player_1_rating,
+        player_2_rating=match.player_2_rating,
+        score=match.score,
+        raw_data=raw,
+    )
+    decision = analyze_match(parsed)
+    if not decision.suitable:
+        return
+    signal.signal_type = decision.signal_type
+    signal.signal_payload = decision.payload or {}
+    signal.message_text = build_signal_message(parsed, decision)
 async def safe_edit_text(message: Message, text: str, **kwargs: object) -> None:
     try:
         await message.edit_text(text, **kwargs)
@@ -836,6 +864,15 @@ async def signal_view_callback(callback: CallbackQuery) -> None:
         await callback.answer("Сигнал не найден", show_alert=True)
         return
     signal, match, result = row
+    async with SessionFactory() as session:
+        signal = await session.get(ScheduledSignal, signal_id)
+        match = await session.get(Match, signal.match_id) if signal else None
+        if signal is not None:
+            await _refresh_signal_message_from_match(session, signal, match)
+            await session.commit()
+    if signal is None:
+        await callback.answer("Сигнал не найден", show_alert=True)
+        return
     header = (
         f"Результат: {result_full_label(result)}\n"
         f"Тип: {signal_group_label(signal)}\n"
@@ -935,6 +972,9 @@ async def signal_preview_callback(callback: CallbackQuery) -> None:
     _, _, signal_id_raw, _, _ = callback.data.split(":")
     async with SessionFactory() as session:
         signal = await session.get(ScheduledSignal, int(signal_id_raw))
+        if signal is not None:
+            await _refresh_signal_message_from_match(session, signal)
+            await session.commit()
     if signal is None or not signal.message_text:
         await callback.answer("Текст сигнала не найден", show_alert=True)
         return
