@@ -1603,13 +1603,6 @@ def analysis_list_keyboard(
 
 def analysis_detail_keyboard(request_id: int, current_status: str, list_status: str, page: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if current_status in {"new", "paid"}:
-        rows.append([
-            InlineKeyboardButton(
-                text="📝 Взять в работу",
-                callback_data=f"an:work:{request_id}:{list_status}:{page}",
-            )
-        ])
     if current_status in {"paid", "in_progress"}:
         rows.append([
             InlineKeyboardButton(
@@ -2106,7 +2099,6 @@ async def analysis_issue_callback(callback: CallbackQuery) -> None:
     _, _, request_id_raw, list_status, page_raw = callback.data.split(":")
     request_id = int(request_id_raw)
     page = int(page_raw)
-    request_id = int(request_id_raw)
     async with SessionFactory() as session:
         request = await session.get(MatchAnalysisRequest, request_id)
         if request is None:
@@ -2116,19 +2108,21 @@ async def analysis_issue_callback(callback: CallbackQuery) -> None:
         if match is None:
             await callback.answer("Матч не найден", show_alert=True)
             return
-        request.updated_at = datetime.utcnow()
-        user_telegram_id = request.telegram_id
         analysis_text = build_match_analysis_text(match)
-        await session.commit()
+        user_telegram_id = request.telegram_id
     try:
         await callback.bot.send_message(chat_id=user_telegram_id, text=analysis_text)
     except Exception:
         await callback.answer("Не удалось отправить анализ клиенту", show_alert=True)
         return
+    async with SessionFactory() as session:
+        request = await session.get(MatchAnalysisRequest, request_id)
+        if request is not None:
+            request.status = "done"
+            request.updated_at = datetime.utcnow()
+            await session.commit()
     await callback.answer("Анализ выдан клиенту", show_alert=True)
     await show_analysis_detail(callback, request_id, list_status, page)
-
-
 
 
 @router.callback_query(F.data.startswith("usr:list:"))
