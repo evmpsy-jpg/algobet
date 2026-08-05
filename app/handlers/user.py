@@ -27,7 +27,7 @@ from app.services.match_analysis import (
     get_upcoming_matches,
 )
 from app.services.signal_results import format_winrate, result_short_label, signal_stats_eligible, summarize_results
-from app.services.stake_calculator import STEP_OPTIONS, format_step_stake_calculator, parse_bank, parse_step
+from app.services.stake_calculator import COEFFICIENT_OPTIONS, STEP_OPTIONS, format_step_stake_calculator, parse_bank, parse_coefficient, parse_step
 from app.services.subscriptions import (
     PLAN_GROUP_LABELS,
     SUBSCRIPTION_PLANS,
@@ -44,6 +44,7 @@ router = Router(name="user")
 class CalculatorStates(StatesGroup):
     waiting_for_bank = State()
     waiting_for_step = State()
+    waiting_for_coefficient = State()
 
 
 
@@ -548,6 +549,17 @@ def calculator_step_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+
+def calculator_coefficient_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(
+            text=str(coefficient.normalize()).replace(".", ","),
+            callback_data=f"calc:coeff:{coefficient:.2f}",
+        )
+        for coefficient in COEFFICIENT_OPTIONS
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[buttons[:4], buttons[4:8], buttons[8:]])
+
 def analysis_matches_keyboard(matches: list[Match]) -> InlineKeyboardMarkup:
     rows = []
     for match in matches:
@@ -690,13 +702,29 @@ async def calculator_step_callback(callback: CallbackQuery, state: FSMContext) -
         return
     try:
         step = parse_step(callback.data.split(":")[-1])
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await state.update_data(step=str(step))
+    await state.set_state(CalculatorStates.waiting_for_coefficient)
+    await callback.message.edit_text("Какой коэффициент выбираете?", reply_markup=calculator_coefficient_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(CalculatorStates.waiting_for_coefficient, F.data.startswith("calc:coeff:"))
+async def calculator_coefficient_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.data is None or callback.message is None:
+        return
+    try:
+        coefficient = parse_coefficient(callback.data.split(":")[-1])
         data = await state.get_data()
         bank = parse_bank(str(data.get("bank") or ""))
+        step = parse_step(str(data.get("step") or ""))
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
     await state.clear()
-    await callback.message.edit_text(format_step_stake_calculator(bank, step), reply_markup=calculator_result_keyboard())
+    await callback.message.edit_text(format_step_stake_calculator(bank, step, coefficient), reply_markup=calculator_result_keyboard())
     await callback.answer()
 
 @router.callback_query(F.data == "calc:again")

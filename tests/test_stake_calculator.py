@@ -2,13 +2,14 @@ from decimal import Decimal
 
 import pytest
 
-from app.handlers.user import calculator_result_keyboard, calculator_step_keyboard
+from app.handlers.user import calculator_coefficient_keyboard, calculator_result_keyboard, calculator_step_keyboard
 from app.services.stake_calculator import (
     calculate_stakes,
     calculate_step_stakes,
     format_step_stake_calculator,
     format_stake_calculator,
     parse_bank,
+    parse_coefficient,
     parse_step,
 )
 
@@ -39,24 +40,26 @@ def test_parse_step_rejects_invalid_values(value: str) -> None:
         parse_step(value)
 
 
-def test_calculate_step_stakes_matches_excel_left_table_for_bank_5500() -> None:
-    item = calculate_step_stakes(Decimal("5500"), 5)
+def test_calculate_step_stakes_matches_selected_coefficient_for_bank_5500() -> None:
+    item = calculate_step_stakes(Decimal("5500"), 5, Decimal("1.55"))
 
     assert item.signal_bank == Decimal("1100.00")
+    assert item.coefficient == Decimal("1.55")
     assert item.set_1 == Decimal("88.00")
-    assert item.set_2 == Decimal("242.00")
-    assert item.set_3 == Decimal("770.00")
+    assert item.set_2 == Decimal("264.00")
+    assert item.set_3 == Decimal("748.00")
     assert item.total == Decimal("1100.00")
 
 
 def test_format_step_stake_calculator_outputs_mini_table() -> None:
-    text = format_step_stake_calculator(Decimal("5500"), 5)
+    text = format_step_stake_calculator(Decimal("5500"), 5, Decimal("1.55"))
 
     assert "Банк: 5 500" in text
     assert "Шаг: 1/5" in text
+    assert "Коэффициент: 1,55" in text
     assert "1 сет | 8% | 88" in text
-    assert "2 сет | 22% | 242" in text
-    assert "3 сет | 70% | 770" in text
+    assert "2 сет | 24% | 264" in text
+    assert "3 сет | 68% | 748" in text
 
 
 def test_calculator_step_keyboard_contains_step_buttons() -> None:
@@ -103,3 +106,33 @@ def test_calculator_result_keyboard_contains_followup_actions() -> None:
 
     assert markup.inline_keyboard[0][0].callback_data == "calc:again"
     assert markup.inline_keyboard[1][0].callback_data == "calc:menu"
+
+
+def test_parse_coefficient_accepts_button_values() -> None:
+    assert parse_coefficient("1.50") == Decimal("1.50")
+    assert parse_coefficient("1,95") == Decimal("1.95")
+
+
+@pytest.mark.parametrize("value", ["1.40", "2.05", "abc"])
+def test_parse_coefficient_rejects_invalid_values(value: str) -> None:
+    with pytest.raises(ValueError):
+        parse_coefficient(value)
+
+
+def test_calculator_coefficient_keyboard_contains_coefficient_buttons() -> None:
+    markup = calculator_coefficient_keyboard()
+
+    callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
+    assert callbacks == [
+        "calc:coeff:1.50",
+        "calc:coeff:1.55",
+        "calc:coeff:1.60",
+        "calc:coeff:1.65",
+        "calc:coeff:1.70",
+        "calc:coeff:1.75",
+        "calc:coeff:1.80",
+        "calc:coeff:1.85",
+        "calc:coeff:1.90",
+        "calc:coeff:1.95",
+        "calc:coeff:2.00",
+    ]

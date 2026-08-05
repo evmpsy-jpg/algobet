@@ -27,7 +27,11 @@ class StakeCalculation:
 class StepStakeCalculation:
     bank: Decimal
     step_divisor: int
+    coefficient: Decimal
     signal_bank: Decimal
+    set_1_ratio: Decimal
+    set_2_ratio: Decimal
+    set_3_ratio: Decimal
     set_1: Decimal
     set_2: Decimal
     set_3: Decimal
@@ -50,7 +54,7 @@ STAKE_PLANS = [
     StakePlan(Decimal("2.00"), Decimal("0.15"), Decimal("0.30"), Decimal("0.55")),
 ]
 STEP_OPTIONS = (2, 3, 5, 8, 10, 15, 20)
-SET_RATIOS = (Decimal("0.08"), Decimal("0.22"), Decimal("0.70"))
+COEFFICIENT_OPTIONS = tuple(plan.coefficient for plan in STAKE_PLANS if plan.coefficient >= Decimal("1.50"))
 TWOPLACES = Decimal("0.01")
 
 
@@ -83,21 +87,56 @@ def parse_step(value: str) -> int:
     return step
 
 
+def parse_coefficient(value: str) -> Decimal:
+    normalized = value.strip().replace(",", ".")
+    try:
+        coefficient = Decimal(normalized).quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise ValueError("Выберите коэффициент кнопкой") from exc
+    if coefficient not in COEFFICIENT_OPTIONS:
+        raise ValueError("Выберите один из доступных коэффициентов")
+    return coefficient
+
+
+def _stake_plan_for_coefficient(coefficient: Decimal) -> StakePlan:
+    normalized = parse_coefficient(str(coefficient))
+    for plan in STAKE_PLANS:
+        if plan.coefficient == normalized:
+            return plan
+    raise ValueError("Выберите один из доступных коэффициентов")
+
+
 def _money(value: Decimal) -> Decimal:
     return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
 
-def calculate_step_stakes(bank: Decimal, step_divisor: int) -> StepStakeCalculation:
+def _ratio_percent(value: Decimal) -> str:
+    percent = value * Decimal("100")
+    if percent == percent.to_integral_value():
+        return str(int(percent))
+    return str(percent.normalize()).replace(".", ",")
+
+
+def _coefficient_text(value: Decimal) -> str:
+    return str(value.normalize()).replace(".", ",")
+
+
+def calculate_step_stakes(bank: Decimal, step_divisor: int, coefficient: Decimal = Decimal("1.50")) -> StepStakeCalculation:
     if step_divisor <= 0:
         raise ValueError("Шаг должен быть больше нуля")
+    plan = _stake_plan_for_coefficient(coefficient)
     signal_bank = _money(bank / Decimal(step_divisor))
-    set_1 = _money(signal_bank * SET_RATIOS[0])
-    set_2 = _money(signal_bank * SET_RATIOS[1])
-    set_3 = _money(signal_bank * SET_RATIOS[2])
+    set_1 = _money(signal_bank * plan.step_1_ratio)
+    set_2 = _money(signal_bank * plan.step_2_ratio)
+    set_3 = _money(signal_bank * plan.step_3_ratio)
     return StepStakeCalculation(
         bank=bank,
         step_divisor=step_divisor,
+        coefficient=plan.coefficient,
         signal_bank=signal_bank,
+        set_1_ratio=plan.step_1_ratio,
+        set_2_ratio=plan.step_2_ratio,
+        set_3_ratio=plan.step_3_ratio,
         set_1=set_1,
         set_2=set_2,
         set_3=set_3,
@@ -124,19 +163,20 @@ def format_amount(value: Decimal) -> str:
     return f"{value:,.2f}".replace(",", " ").replace(".", ",")
 
 
-def format_step_stake_calculator(bank: Decimal, step_divisor: int) -> str:
-    item = calculate_step_stakes(bank, step_divisor)
+def format_step_stake_calculator(bank: Decimal, step_divisor: int, coefficient: Decimal = Decimal("1.50")) -> str:
+    item = calculate_step_stakes(bank, step_divisor, coefficient)
     lines = [
         "🧮 Калькулятор ставок",
         "",
         f"Банк: {format_amount(item.bank)}",
         f"Шаг: 1/{item.step_divisor}",
+        f"Коэффициент: {_coefficient_text(item.coefficient)}",
         f"Сумма на сигнал: {format_amount(item.signal_bank)}",
         "",
         "Сет | Доля | Ставка",
-        f"1 сет | 8% | {format_amount(item.set_1)}",
-        f"2 сет | 22% | {format_amount(item.set_2)}",
-        f"3 сет | 70% | {format_amount(item.set_3)}",
+        f"1 сет | {_ratio_percent(item.set_1_ratio)}% | {format_amount(item.set_1)}",
+        f"2 сет | {_ratio_percent(item.set_2_ratio)}% | {format_amount(item.set_2)}",
+        f"3 сет | {_ratio_percent(item.set_3_ratio)}% | {format_amount(item.set_3)}",
         f"Итого | 100% | {format_amount(item.total)}",
     ]
     return "\n".join(lines)[:3900]
@@ -151,7 +191,7 @@ def format_stake_calculator(bank: Decimal) -> str:
         "Ставки по трёхшаговой стратегии:",
     ]
     for item in calculate_stakes(bank):
-        coefficient = str(item.coefficient.normalize()).replace(".", ",")
+        coefficient = _coefficient_text(item.coefficient)
         lines.append(
             f"КФ {coefficient}: "
             f"1 сет {format_amount(item.step_1)} / "
