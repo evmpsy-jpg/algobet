@@ -530,7 +530,7 @@ async def public_results_handler(message: Message) -> None:
                 & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
             )
             .where(SignalResult.status.in_(["won", "lost", "void"]))
-            .order_by(desc(SignalResult.fixed_at), desc(ScheduledSignal.sent_at), desc(ScheduledSignal.id))
+            .order_by(desc(Match.match_start_at), desc(ScheduledSignal.sent_at), desc(SignalResult.fixed_at), desc(ScheduledSignal.id))
         )).all())
     await message.answer(format_public_results(rows, len(rows)))
 
