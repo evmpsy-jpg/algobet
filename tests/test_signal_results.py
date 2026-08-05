@@ -118,11 +118,9 @@ def test_infer_signal_result_status_from_match_score() -> None:
     assert infer_signal_result_status("-:-", 1) is None
     assert infer_signal_result_status(None, 1) is None
     assert infer_signal_result_status("11:11", 1) == "void"
-    assert infer_signal_result_status("3", 1) == "won"
-    assert infer_signal_result_status("3", 2) == "lost"
-    assert infer_signal_result_status("-2", 1) == "lost"
-    assert infer_signal_result_status("-2", 2) == "won"
-    assert infer_signal_result_status("0", 1) == "void"
+    assert infer_signal_result_status("3", 1) is None
+    assert infer_signal_result_status("-2", 2) is None
+    assert infer_signal_result_status("0", 1) is None
 
 
 @pytest.mark.asyncio
@@ -218,4 +216,34 @@ async def test_auto_update_signal_results_summarizes_bulk_run() -> None:
         assert result is not None
         assert result.status == "won"
         assert result.source == "auto"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_auto_update_removes_auto_result_when_score_is_formula_number() -> None:
+    engine, factory = await make_session()
+    async with factory() as session:
+        match = make_match()
+        match.score = "-2"
+        session.add(match)
+        await session.flush()
+        signal = ScheduledSignal(
+            match_id=match.id,
+            status="sent",
+            send_at=datetime(2026, 7, 22, 11, 45, tzinfo=timezone.utc),
+            signal_payload={"side": 1},
+            message_text="signal",
+        )
+        session.add(signal)
+        await session.flush()
+        session.add(SignalResult(signal_id=signal.id, status="lost", source="auto"))
+        await session.commit()
+
+        summary = await auto_update_signal_results(session)
+        await session.commit()
+
+        assert summary.no_score == 1
+        assert summary.updated == 1
+        result = await session.scalar(select(SignalResult).where(SignalResult.signal_id == signal.id))
+        assert result is None
     await engine.dispose()

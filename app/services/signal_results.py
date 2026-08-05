@@ -30,7 +30,6 @@ RESULT_SHORT_LABELS = {
 LEVEL_ORDER = ("TOP", "STRONG", "STANDARD")
 SIGNAL_GROUP_ORDER = ("vip", "all", "unknown")
 SCORE_PAIR_RE = re.compile(r"(\d+)\s*[:\-–—]\s*(\d+)")
-SCORE_MARGIN_RE = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
 
 
 @dataclass
@@ -130,13 +129,7 @@ def infer_signal_result_status(score: str | None, side: int | None) -> str | Non
 
     pairs = [(int(left), int(right)) for left, right in SCORE_PAIR_RE.findall(normalized)]
     if not pairs:
-        if not SCORE_MARGIN_RE.match(normalized):
-            return None
-        margin = float(normalized.replace(",", "."))
-        if margin == 0:
-            return "void"
-        selected_margin = margin if side == 1 else -margin
-        return "won" if selected_margin > 0 else "lost"
+        return None
 
     if len(pairs) == 1:
         left, right = pairs[0]
@@ -161,10 +154,12 @@ async def auto_set_signal_result(
 ) -> SignalResult | None:
     side = signal.signal_payload.get("side") if signal.signal_payload else None
     status = infer_signal_result_status(match.score, side)
+    result = await session.scalar(select(SignalResult).where(SignalResult.signal_id == signal.id))
     if status is None:
+        if result is not None and result.source == "auto":
+            await session.delete(result)
         return None
 
-    result = await session.scalar(select(SignalResult).where(SignalResult.signal_id == signal.id))
     now = datetime.utcnow()
     if result is not None and result.source != "auto":
         return None
@@ -194,6 +189,9 @@ async def auto_update_signal_results(session: AsyncSession) -> AutoResultSummary
         status = infer_signal_result_status(match.score, side)
         if status is None:
             summary.no_score += 1
+            if result is not None and result.source == "auto":
+                await session.delete(result)
+                summary.updated += 1
             continue
         if result is not None and result.source != "auto":
             summary.skipped_manual += 1
