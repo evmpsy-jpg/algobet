@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -23,6 +23,8 @@ PLAYER_RE = re.compile(
     re.IGNORECASE,
 )
 DATE_RE = re.compile(r"(?P<day>\d{2})\.(?P<month>\d{2})\.(?P<year>\d{4})")
+NIGHT_ROLLOVER_PREVIOUS_HOUR = 22
+NIGHT_ROLLOVER_CURRENT_HOUR = 6
 
 
 @dataclass(slots=True)
@@ -92,6 +94,30 @@ def _tournament_sheet_name(sheetnames: list[str]) -> str:
     return sheetnames[0]
 
 
+
+def _time_minutes(match_time: str) -> int:
+    hours_raw, minutes_raw = match_time.split(":", 1)
+    return int(hours_raw) * 60 + int(minutes_raw)
+
+
+def parse_match_start_at(
+    current_date: str,
+    match_time: str,
+    tz: ZoneInfo,
+    *,
+    previous_match_minutes: int | None,
+    day_offset: int,
+) -> tuple[datetime, int, int]:
+    current_minutes = _time_minutes(match_time)
+    if (
+        previous_match_minutes is not None
+        and previous_match_minutes >= NIGHT_ROLLOVER_PREVIOUS_HOUR * 60
+        and current_minutes < NIGHT_ROLLOVER_CURRENT_HOUR * 60
+    ):
+        day_offset += 1
+    start_at = datetime.strptime(f"{current_date} {match_time}", "%d.%m.%Y %H:%M").replace(tzinfo=tz)
+    return start_at + timedelta(days=day_offset), current_minutes, day_offset
+
 def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> ParseResult:
     # Первая книга нужна для HYPERLINK и исходных формул, вторая - для
     # сохранённых Excel значений вычисляемых столбцов (EG, EH, CS, CT и т. д.).
@@ -104,6 +130,8 @@ def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> Parse
     current_date: str | None = None
     current_headers: list[str] = []
     current_tournament_name = "Турнир"
+    current_tournament_day_offset = 0
+    previous_match_minutes: int | None = None
     parsed: list[ParsedMatch] = []
     warnings: list[str] = []
     if sheet_name != "Турниры":
@@ -117,6 +145,8 @@ def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> Parse
         date_match = DATE_RE.search(str(first_value)) if first_value else None
         if date_match:
             current_date = date_match.group(0)
+            current_tournament_day_offset = 0
+            previous_match_minutes = None
             current_headers = [
                 str(cell.value).strip() if cell.value is not None else f"COL_{index + 1}"
                 for index, cell in enumerate(values_row)
@@ -127,6 +157,8 @@ def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> Parse
         tournament_link = _extract_link_and_label(formula_row[0], values_row[0]) if formula_row else None
         if tournament_link is not None:
             current_tournament_name = tournament_link[1].strip()
+            current_tournament_day_offset = 0
+            previous_match_minutes = None
 
         if not current_date or len(formula_row) < 3:
             continue
@@ -145,7 +177,13 @@ def parse_tournaments_file(path: Path, timezone: str = "Europe/Moscow") -> Parse
 
         match_time = str(time_value).strip()[:5]
         try:
-            start_at = datetime.strptime(f"{current_date} {match_time}", "%d.%m.%Y %H:%M").replace(tzinfo=tz)
+            start_at, previous_match_minutes, current_tournament_day_offset = parse_match_start_at(
+                current_date,
+                match_time,
+                tz,
+                previous_match_minutes=previous_match_minutes,
+                day_offset=current_tournament_day_offset,
+            )
         except ValueError:
             warnings.append(f"Строка {row_number}: неверные дата/время {current_date} {match_time}.")
             continue

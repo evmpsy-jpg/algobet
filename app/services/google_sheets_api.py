@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from openpyxl.utils import get_column_letter
 
-from app.services.excel_parser import DATE_RE, HYPERLINK_RE, PLAYER_RE, URL_IDS_RE, ParsedMatch, ParseResult
+from app.services.excel_parser import DATE_RE, HYPERLINK_RE, PLAYER_RE, URL_IDS_RE, ParsedMatch, ParseResult, parse_match_start_at
 from app.services.spreadsheet_metrics import calculate_signal_columns
 
 GOOGLE_SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
@@ -223,6 +223,8 @@ def parse_google_sheets_grid(payload: dict[str, Any], timezone: str = "Europe/Mo
     current_date: str | None = None
     current_headers: list[str] = []
     current_tournament_name = "Турнир"
+    current_tournament_day_offset = 0
+    previous_match_minutes: int | None = None
     parsed: list[ParsedMatch] = []
     warnings: list[str] = []
     tz = ZoneInfo(timezone)
@@ -233,6 +235,8 @@ def parse_google_sheets_grid(payload: dict[str, Any], timezone: str = "Europe/Mo
         date_match = DATE_RE.search(first_text) if first_text else None
         if date_match:
             current_date = date_match.group(0)
+            current_tournament_day_offset = 0
+            previous_match_minutes = None
             current_headers = [
                 _display_value(cell) or f"COL_{index + 1}"
                 for index, cell in enumerate(cells)
@@ -242,6 +246,8 @@ def parse_google_sheets_grid(payload: dict[str, Any], timezone: str = "Europe/Mo
         tournament_link = _extract_link_and_label(cells[0]) if cells else None
         if tournament_link is not None:
             current_tournament_name = tournament_link[1].strip()
+            current_tournament_day_offset = 0
+            previous_match_minutes = None
 
         if not current_date or len(cells) < 3:
             continue
@@ -260,7 +266,13 @@ def parse_google_sheets_grid(payload: dict[str, Any], timezone: str = "Europe/Mo
 
         match_time = time_value[:5]
         try:
-            start_at = datetime.strptime(f"{current_date} {match_time}", "%d.%m.%Y %H:%M").replace(tzinfo=tz)
+            start_at, previous_match_minutes, current_tournament_day_offset = parse_match_start_at(
+                current_date,
+                match_time,
+                tz,
+                previous_match_minutes=previous_match_minutes,
+                day_offset=current_tournament_day_offset,
+            )
         except ValueError:
             warnings.append(f"Строка {row_number}: неверные дата/время {current_date} {match_time}.")
             continue

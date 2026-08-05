@@ -69,3 +69,36 @@ def test_last_data_row_from_values_ignores_formula_tail() -> None:
     ]
 
     assert _last_data_row_from_values(values) == 2
+
+def test_parse_google_sheets_grid_rolls_night_matches_to_next_day() -> None:
+    payload = {
+        "sheets": [
+            {
+                "properties": {"title": "Август 2026"},
+                "data": [
+                    {
+                        "rowData": [
+                            {"values": [cell("04.08.2026"), cell("Время"), cell("Матч")]},
+                            {"values": [cell("Лига", hyperlink="https://example.test/tournaments/9001")]},
+                            {"values": [
+                                cell(),
+                                cell("23:45"),
+                                cell("(100) Игрок 1 vs (200) Игрок 2", hyperlink="https://example.test/tournaments/9001/501"),
+                            ]},
+                            {"values": [
+                                cell(),
+                                cell("00:05"),
+                                cell("(300) Игрок 3 vs (400) Игрок 4", hyperlink="https://example.test/tournaments/9001/502"),
+                            ]},
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+    result = parse_google_sheets_grid(payload)
+
+    assert [match.match_time for match in result.matches] == ["23:45", "00:05"]
+    assert result.matches[0].match_start_at.strftime("%d.%m.%Y %H:%M") == "04.08.2026 23:45"
+    assert result.matches[1].match_start_at.strftime("%d.%m.%Y %H:%M") == "05.08.2026 00:05"
