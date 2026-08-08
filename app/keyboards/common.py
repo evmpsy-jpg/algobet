@@ -20,6 +20,7 @@ def admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📤 История отправок"), KeyboardButton(text="📈 Статистика")],
             [KeyboardButton(text="👥 Пользователи"), KeyboardButton(text="🔎 Заявки на анализ")],
             [KeyboardButton(text="💳 Заявки на подписку")],
+            [KeyboardButton(text="📣 Опубликовать прошедший сигнал")],
             [KeyboardButton(text="📋 Последняя загрузка"), KeyboardButton(text="⚙️ Настройки")],
             [KeyboardButton(text="🛠 Обслуживание")],
             [KeyboardButton(text="⬅️ Главное меню")],

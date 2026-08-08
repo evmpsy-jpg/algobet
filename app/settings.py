@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     stats_correction_lost: int = Field(default=0, alias="STATS_CORRECTION_LOST")
     stats_correction_void: int = Field(default=0, alias="STATS_CORRECTION_VOID")
     stats_correction_unknown: int = Field(default=0, alias="STATS_CORRECTION_UNKNOWN")
+    promo_results_chat_id: int = Field(default=0, alias="PROMO_RESULTS_CHAT_ID")
+    promo_results_message_thread_id: int = Field(default=0, alias="PROMO_RESULTS_MESSAGE_THREAD_ID")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

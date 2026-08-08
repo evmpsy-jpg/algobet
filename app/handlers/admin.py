@@ -37,6 +37,7 @@ from app.services.match_analysis import build_match_analysis_text, format_analys
 from app.services.signal_rules import analyze_match, build_signal_message
 from app.services.rules_config import get_signal_rules, reload_signal_rules
 from app.services.signal_sender import process_signal_now
+from app.services.promo_publisher import publish_next_played_signal
 from app.services.signal_results import auto_update_signal_results, format_winrate, result_full_label, result_label, result_short_label, result_source_label, set_signal_result, signal_group_title, signal_stats_eligible, summarize_results
 from app.services.signal_tariffs import SIGNAL_TARIFF_ORDER, signal_tariff_title
 from app.services.sqlite_backup import create_sqlite_backup, latest_sqlite_backup, sqlite_database_path
@@ -697,6 +698,20 @@ async def chat_info(message: Message) -> None:
             f"username: @{from_user.username}" if from_user.username else "username: —",
         ])
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+@router.message(F.text == "📣 Опубликовать прошедший сигнал")
+async def publish_promo_signal(message: Message) -> None:
+    if not is_admin(message):
+        await message.answer("Доступ запрещён.")
+        return
+    await message.answer("Публикую следующий сыгранный сигнал…")
+    async with SessionFactory() as session:
+        result = await publish_next_played_signal(
+            message.bot,
+            session,
+            posted_by_telegram_id=message.from_user.id if message.from_user else None,
+        )
+    await message.answer(result.message, reply_markup=admin_menu())
 
 @router.message(F.text.in_({"📥 Импорт Excel", "📥 Загрузить таблицу"}))
 async def request_upload(message: Message, state: FSMContext) -> None:
@@ -2387,6 +2402,9 @@ def format_admin_settings_text(
         f"Все сигналы от: {strong_probability}%\n"
         f"Проверка очереди: каждые {settings.scheduler_interval_seconds} секунд\n"
         f"Максимальный Excel: {settings.max_upload_mb} МБ\n\n"
+        "📣 Публикация прошедших сигналов\n"
+        f"Чат: {settings.promo_results_chat_id or 'не настроен'}\n"
+        f"Топик: {settings.promo_results_message_thread_id or 'не настроен'}\n\n"
         "🔎 Анализ матча\n"
         f"Реквизиты: {analysis_payment_details}\n"
         f"Контакт специалиста: {analysis_specialist_contact}\n\n"

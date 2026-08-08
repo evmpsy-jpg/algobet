@@ -186,7 +186,23 @@ class ScheduledSignal(Base):
     match: Mapped[Match] = relationship(back_populates="signal")
     deliveries: Mapped[list["SignalDelivery"]] = relationship(back_populates="signal")
     result: Mapped["SignalResult | None"] = relationship(back_populates="signal", uselist=False)
+    promo_post: Mapped["PromoSignalPost | None"] = relationship(back_populates="signal", uselist=False)
 
+
+class PromoSignalPost(Base):
+    __tablename__ = "promo_signal_posts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("scheduled_signals.id"), unique=True, index=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    message_thread_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(30), default="sent", index=True)
+    error_text: Mapped[str | None] = mapped_column(Text)
+    posted_by_telegram_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    signal: Mapped[ScheduledSignal] = relationship(back_populates="promo_post")
 
 class SignalDelivery(Base):
     __tablename__ = "signal_deliveries"
@@ -268,4 +284,3 @@ class WebAdminActionLog(Base):
     target_id: Mapped[str | None] = mapped_column(String(100), index=True)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-
