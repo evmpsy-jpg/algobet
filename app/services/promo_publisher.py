@@ -110,6 +110,7 @@ async def publish_next_played_signal(
     *,
     posted_by_telegram_id: int | None = None,
     min_result_fixed_at: datetime | None = None,
+    min_match_start_at: datetime | None = None,
 ) -> PromoPublishResult:
     settings = get_settings()
     if not settings.promo_results_chat_id:
@@ -129,6 +130,8 @@ async def publish_next_played_signal(
     )
     if min_result_fixed_at is not None:
         query = query.where(SignalResult.fixed_at >= min_result_fixed_at)
+    if min_match_start_at is not None:
+        query = query.where(Match.match_start_at >= min_match_start_at)
     row = (
         await session.execute(
             query.order_by(asc(Match.match_start_at), asc(ScheduledSignal.id)).limit(1)

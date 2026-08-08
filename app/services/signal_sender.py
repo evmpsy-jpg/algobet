@@ -308,6 +308,20 @@ async def process_delivery_now(
     return summary
 
 
+def _parse_promo_auto_start_at(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("Некорректный PROMO_RESULTS_AUTO_START_AT: %s", raw)
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 async def signal_sender_loop(bot: Bot) -> None:
     settings = get_settings()
     while True:
@@ -349,6 +363,7 @@ async def signal_sender_loop(bot: Bot) -> None:
                         bot,
                         session,
                         min_result_fixed_at=datetime.utcnow() - timedelta(hours=lookback_hours),
+                        min_match_start_at=_parse_promo_auto_start_at(settings.promo_results_auto_start_at),
                     )
                     if promo_result.status == "sent":
                         logger.info("Промо-сигнал опубликован автоматически: signal_id=%s", promo_result.signal_id)

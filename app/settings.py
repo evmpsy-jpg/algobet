@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     promo_results_message_thread_id: int = Field(default=0, alias="PROMO_RESULTS_MESSAGE_THREAD_ID")
     promo_results_auto_enabled: bool = Field(default=False, alias="PROMO_RESULTS_AUTO_ENABLED")
     promo_results_auto_lookback_hours: int = Field(default=6, alias="PROMO_RESULTS_AUTO_LOOKBACK_HOURS")
+    promo_results_auto_start_at: str = Field(default="", alias="PROMO_RESULTS_AUTO_START_AT")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
