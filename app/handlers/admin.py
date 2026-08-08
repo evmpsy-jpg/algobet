@@ -8,6 +8,7 @@ from pathlib import Path
 from aiogram import F, Router
 from aiogram.enums import ContentType
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -674,6 +675,30 @@ async def admin_panel(message: Message) -> None:
         return
     await message.answer("⚙️ Админ-панель", reply_markup=admin_menu())
 
+
+@router.message(Command("chatinfo"))
+async def chat_info(message: Message) -> None:
+    if not is_admin(message):
+        await message.answer("Доступ запрещён.")
+        return
+
+    chat = message.chat
+    from_user = message.from_user
+    lines = [
+        "ℹ️ Chat info",
+        "",
+        f"chat_id: <code>{chat.id}</code>",
+        f"chat_type: <code>{chat.type}</code>",
+        f"chat_title: {chat.title or '—'}",
+        f"message_thread_id: <code>{message.message_thread_id or '—'}</code>",
+    ]
+    if from_user is not None:
+        lines.extend([
+            "",
+            f"your_telegram_id: <code>{from_user.id}</code>",
+            f"username: @{from_user.username}" if from_user.username else "username: —",
+        ])
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 @router.message(F.text.in_({"📥 Импорт Excel", "📥 Загрузить таблицу"}))
 async def request_upload(message: Message, state: FSMContext) -> None:
