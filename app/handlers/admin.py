@@ -678,12 +678,9 @@ async def admin_panel(message: Message) -> None:
 
 @router.message(Command("chatinfo"))
 async def chat_info(message: Message) -> None:
-    if not is_admin(message):
-        await message.answer("Доступ запрещён.")
-        return
-
     chat = message.chat
     from_user = message.from_user
+    admin_access = is_admin(message)
     lines = [
         "ℹ️ Chat info",
         "",
@@ -691,6 +688,7 @@ async def chat_info(message: Message) -> None:
         f"chat_type: <code>{chat.type}</code>",
         f"chat_title: {chat.title or '—'}",
         f"message_thread_id: <code>{message.message_thread_id or '—'}</code>",
+        f"admin_access: {'yes' if admin_access else 'no'}",
     ]
     if from_user is not None:
         lines.extend([
