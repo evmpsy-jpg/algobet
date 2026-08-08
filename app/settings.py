@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     stats_correction_unknown: int = Field(default=0, alias="STATS_CORRECTION_UNKNOWN")
     promo_results_chat_id: int = Field(default=0, alias="PROMO_RESULTS_CHAT_ID")
     promo_results_message_thread_id: int = Field(default=0, alias="PROMO_RESULTS_MESSAGE_THREAD_ID")
+    promo_results_auto_enabled: bool = Field(default=False, alias="PROMO_RESULTS_AUTO_ENABLED")
+    promo_results_auto_lookback_hours: int = Field(default=6, alias="PROMO_RESULTS_AUTO_LOOKBACK_HOURS")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

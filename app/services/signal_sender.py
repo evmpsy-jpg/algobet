@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Bot
 from sqlalchemy import select
@@ -15,6 +15,8 @@ from app.database.session import SessionFactory
 from app.services.access import consume_signal_access, has_signal_access
 from app.services.admin_notifications import format_delivery_failure_admin_text, notify_admins
 from app.services.excel_parser import ParsedMatch
+from app.services.promo_publisher import publish_next_played_signal
+from app.services.signal_results import auto_update_signal_results
 from app.services.signal_rules import analyze_match, build_signal_message
 
 logger = logging.getLogger(__name__)
@@ -330,6 +332,28 @@ async def signal_sender_loop(bot: Bot) -> None:
                                 summary.sent_deliveries,
                             ),
                         )
+
+                result_summary = await auto_update_signal_results(session)
+                if result_summary.updated:
+                    await session.commit()
+                    logger.info(
+                        "Автообновление результатов: scanned=%s updated=%s no_score=%s",
+                        result_summary.scanned,
+                        result_summary.updated,
+                        result_summary.no_score,
+                    )
+
+                if settings.promo_results_auto_enabled:
+                    lookback_hours = max(1, int(settings.promo_results_auto_lookback_hours or 1))
+                    promo_result = await publish_next_played_signal(
+                        bot,
+                        session,
+                        min_result_fixed_at=datetime.utcnow() - timedelta(hours=lookback_hours),
+                    )
+                    if promo_result.status == "sent":
+                        logger.info("Промо-сигнал опубликован автоматически: signal_id=%s", promo_result.signal_id)
+                    elif promo_result.status == "error":
+                        logger.warning("Ошибка автопубликации промо-сигнала: %s", promo_result.message)
         except asyncio.CancelledError:
             raise
         except Exception:

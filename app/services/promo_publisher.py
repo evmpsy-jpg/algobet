@@ -109,6 +109,7 @@ async def publish_next_played_signal(
     session: AsyncSession,
     *,
     posted_by_telegram_id: int | None = None,
+    min_result_fixed_at: datetime | None = None,
 ) -> PromoPublishResult:
     settings = get_settings()
     if not settings.promo_results_chat_id:
@@ -117,17 +118,20 @@ async def publish_next_played_signal(
             message="Не настроен PROMO_RESULTS_CHAT_ID для публикации прошедших сигналов.",
         )
 
+    query = (
+        select(ScheduledSignal, Match, SignalResult)
+        .join(Match, Match.id == ScheduledSignal.match_id)
+        .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
+        .outerjoin(PromoSignalPost, PromoSignalPost.signal_id == ScheduledSignal.id)
+        .where(ScheduledSignal.status == "sent")
+        .where(SignalResult.status.in_(("won", "lost")))
+        .where(PromoSignalPost.id.is_(None))
+    )
+    if min_result_fixed_at is not None:
+        query = query.where(SignalResult.fixed_at >= min_result_fixed_at)
     row = (
         await session.execute(
-            select(ScheduledSignal, Match, SignalResult)
-            .join(Match, Match.id == ScheduledSignal.match_id)
-            .join(SignalResult, SignalResult.signal_id == ScheduledSignal.id)
-            .outerjoin(PromoSignalPost, PromoSignalPost.signal_id == ScheduledSignal.id)
-            .where(ScheduledSignal.status == "sent")
-            .where(SignalResult.status.in_(("won", "lost")))
-            .where(PromoSignalPost.id.is_(None))
-            .order_by(asc(Match.match_start_at), asc(ScheduledSignal.id))
-            .limit(1)
+            query.order_by(asc(Match.match_start_at), asc(ScheduledSignal.id)).limit(1)
         )
     ).first()
 
