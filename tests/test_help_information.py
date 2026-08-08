@@ -1,7 +1,7 @@
-from app.handlers.user import WELCOME_MESSAGES, format_help_information
+from app.handlers.user import WELCOME_MESSAGES, format_distance_system_information, format_help_information
 
 
-def test_format_help_information_keeps_old_help_and_adds_distance_system() -> None:
+def test_format_help_information_keeps_original_help() -> None:
     text = format_help_information()
 
     assert "📚 <b>Полезная информация</b>" in text
@@ -11,6 +11,12 @@ def test_format_help_information_keeps_old_help_and_adds_distance_system() -> No
     assert "🏆 Результаты" in text
     assert "🎁 Первые 9 сигналов" in text
     assert "не являются гарантией" in text
+    assert "СИСТЕМА НА ДИСТАНЦИЮ" not in text
+    assert len(text) <= 4096
+
+
+def test_format_distance_system_information_mentions_strategy_sections() -> None:
+    text = format_distance_system_information()
 
     assert "📘 <b>СИСТЕМА НА ДИСТАНЦИЮ</b>" in text
     assert "<b>Стратегия «На сет»</b>" in text

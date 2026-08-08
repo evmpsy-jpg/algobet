@@ -509,11 +509,11 @@ def format_help_information() -> str:
 • 🏆 Результаты — последние оцененные сигналы;
 • 🎁 Первые 9 сигналов — активация пробного доступа.
 
-Важно: сигналы не являются гарантией результата. Используйте их как аналитическую подсказку и контролируйте риск.
+Важно: сигналы не являются гарантией результата. Используйте их как аналитическую подсказку и контролируйте риск."""
 
-━━━━━━━━━━━━━━━━━━━━
 
-📘 <b>СИСТЕМА НА ДИСТАНЦИЮ</b>
+def format_distance_system_information() -> str:
+    return """📘 <b>СИСТЕМА НА ДИСТАНЦИЮ</b>
 
 <b>Стратегия «На сет»</b>
 ✅ Мы заходим на <b>победу фаворита в одном конкретном сете</b> внутри матча (до 3х побед).
@@ -551,9 +551,11 @@ def format_help_information() -> str:
 <b>Не заходим при коэффициенте на игру ниже 1.30</b>, соответственно на сет — менее 1.5 (риск не оправдывает прибыль).
 <b>Как только сет выигран — дальше стоп игра.</b>
 <b>Если пропустили, не успели переставить — переходите к следующему сигналу.</b>"""
+
 @router.message(F.text == "📚 Полезная информация")
 async def help_information_handler(message: Message) -> None:
     await message.answer(format_help_information(), parse_mode="HTML")
+    await message.answer(format_distance_system_information(), parse_mode="HTML")
 
 @router.message(F.text == "🏆 Результаты")
 async def public_results_handler(message: Message) -> None:
