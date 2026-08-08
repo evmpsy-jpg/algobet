@@ -1,15 +1,16 @@
 from app.handlers.user import WELCOME_MESSAGES, format_help_information
 
 
-def test_format_help_information_mentions_core_user_sections_and_risk() -> None:
+def test_format_help_information_mentions_distance_system_sections() -> None:
     text = format_help_information()
 
-    assert "📚 Полезная информация" in text
-    assert "📊 Аналитика турниров" in text
-    assert "💳 Подписка" in text
-    assert "🏆 Результаты" in text
-    assert "🎁 Первые 9 сигналов" in text
-    assert "не являются гарантией" in text
+    assert "📘 <b>СИСТЕМА НА ДИСТАНЦИЮ</b>" in text
+    assert "<b>Стратегия «На сет»</b>" in text
+    assert "<b>Только один сет, до первой победы.</b>" in text
+    assert "<b>Работа по сигналу (Цикл из 3 шагов)</b>" in text
+    assert "<b>Защитный режим</b>" in text
+    assert "<b>⛔️ Табу:</b>" in text
+    assert len(text) <= 4096
 
 
 def test_welcome_messages_introduce_product_before_menu() -> None:
