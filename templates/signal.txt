@@ -1,5 +1,6 @@
 🎯 <b>СИГНАЛ — НА СЕТ</b>
 ━━━━━━━━━━━━━━━━━━━━
+Уровень: {signal_group_level}
 
 ⏳ <b>Старт:</b> Через {lead_minutes} минут ({match_time} МСК)
 🏓 <b>Турнир:</b> {tournament_line}

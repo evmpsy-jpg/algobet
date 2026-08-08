@@ -36,6 +36,10 @@ def _html(value: Any) -> str:
     return escape(str(value or ""), quote=False)
 
 
+def _signal_group_level(signal_group: str | None) -> str:
+    return "VIP" if str(signal_group or "").strip().lower() == "vip" else "STANDART"
+
+
 def format_signal(signal: Signal) -> str:
     path = Path("templates/signal.txt")
     if not path.exists():
@@ -45,6 +49,7 @@ def format_signal(signal: Signal) -> str:
     values = {
         "title": _html(signal.title),
         "lead_minutes": signal.lead_minutes,
+        "signal_group_level": _html(_signal_group_level(signal.signal_group)),
         "tournament_line": _html(_tournament_line(signal.tournament_name)),
         "match_time": _html(signal.match_time),
         "player_1": _html(signal.player_1),

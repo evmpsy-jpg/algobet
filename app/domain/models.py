@@ -79,6 +79,7 @@ class SignalDecision:
 class Signal:
     algorithm_version: str
     level: str
+    signal_group: str
     title: str
     match_id: int
     tournament_name: str

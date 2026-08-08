@@ -37,12 +37,13 @@ def test_stage5_signal_contains_set_handicaps():
     assert decision.level == "TOP"
     assert decision.payload["favorite_form"] == 89
     text = format_signal(build_signal(match, decision))
-    assert "🟢 Форма фаворита: 89%" in text
-    assert "👉 Ставка на сет:" in text
+    assert "Уровень: STANDART" in text
+    assert "<b>Текущая форма игроков:</b> 89%" in text
+    assert "👉 <b>Выбор:</b> Победа в сете - <b>Игрок 1</b>" in text
     assert "1️⃣ Сет: +1.8" in text
     assert "2️⃣ Сет: -2.4" in text or "2️⃣ Сет: −2.4" in text
     assert "3️⃣ Сет: 0" in text
-    assert "относительно первого игрока" in text
+    assert "🏓 <b>Фора по мячам (Последние 5 H2H по сетам):</b>" in text
 
 def test_stage5_signal_uses_red_marker_for_second_player():
     match = MatchData(
@@ -67,6 +68,33 @@ def test_stage5_signal_uses_red_marker_for_second_player():
     assert decision.suitable
     assert decision.side == 2
     text = format_signal(build_signal(match, decision))
-    assert "🔴 Вероятность: 62%" in text
-    assert "🔴 Форма фаворита: 60%" in text
-    assert "👉 Ставка на сет:" in text
+    assert "Уровень: STANDART" in text
+    assert "<b>Математическая вероятность исхода:</b> —% ⚔️ 62%" in text
+    assert "<b>Текущая форма игроков:</b> —% ⚔️ 60%" in text
+    assert "👉 <b>Выбор:</b> Победа в сете - <b>Игрок 2</b>" in text
+
+def test_stage5_signal_header_shows_vip_group():
+    match = MatchData(
+        match_id=1,
+        tournament_id=2,
+        source_url="https://example.test",
+        tournament_date="19.07.2026",
+        tournament_name="Турнир A5. Лига 600-700",
+        match_time="13:30",
+        match_start_at=datetime(2026, 7, 19, 13, 30),
+        player_1="Игрок 1",
+        player_2="Игрок 2",
+        h2h_games=10,
+        form_p1=8,
+        favorite_form_p1=89,
+        bg_p1=1.5,
+        probability_p1=92,
+        p1_exact=5,
+    )
+
+    decision = evaluate_match(match)
+    assert decision.suitable
+    decision.payload["signal_group"] = "vip"
+    text = format_signal(build_signal(match, decision))
+    assert decision.payload["signal_group"] == "vip"
+    assert "Уровень: VIP" in text
