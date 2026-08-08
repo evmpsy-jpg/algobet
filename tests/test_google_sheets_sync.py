@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.excel_parser import ParseResult
+from app.services.import_service import ImportSummary
 from app.services.google_sheets_sync import (
     GoogleSheetsSyncResult,
     parse_result_hash,
@@ -76,6 +77,68 @@ async def test_sync_google_sheet_once_skips_unchanged_hash(monkeypatch: pytest.M
     result = await sync_google_sheet_once()
 
     assert result == GoogleSheetsSyncResult(status="skipped", file_hash=file_hash, message="Изменений нет.")
+
+
+
+@pytest.mark.asyncio
+async def test_sync_google_sheet_once_stores_past_due_signals(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed = ParseResult(sheet_name="Лист", total_rows=1, matches=[], warnings=[])
+    captured: dict[str, object] = {}
+
+    async def fake_get_bot_setting(session, key: str, default: str) -> str:
+        return ""
+
+    async def fake_set_bot_setting(session, key: str, value: str, max_length: int | None = None) -> None:
+        captured["setting"] = (key, value, max_length)
+
+    async def fake_import_parse_result(session, result, **kwargs):
+        captured.update(kwargs)
+        return ImportSummary(
+            batch_id=1,
+            total_rows=1,
+            parsed_matches=0,
+            inserted_matches=0,
+            updated_matches=0,
+            missing_matches=0,
+            scheduled_signals=0,
+            cancelled_signals=0,
+            scheduled_by_group={},
+            rejection_reasons={},
+            warnings=[],
+        )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def commit(self):
+            captured["committed"] = True
+
+    monkeypatch.setattr(
+        "app.services.google_sheets_sync.get_settings",
+        lambda: SimpleNamespace(
+            google_sheet_id="sheet",
+            google_service_account_file="service.json",
+            timezone="Europe/Moscow",
+            admin_ids=[],
+            google_sheets_sync_max_rows=500,
+        ),
+    )
+    monkeypatch.setattr("app.services.google_sheets_sync.parse_google_sheet_with_service_account", lambda sheet_id, path, timezone, max_rows: parsed)
+    monkeypatch.setattr("app.services.google_sheets_sync.SessionFactory", lambda: FakeSession())
+    monkeypatch.setattr("app.services.google_sheets_sync.get_bot_setting", fake_get_bot_setting)
+    monkeypatch.setattr("app.services.google_sheets_sync.set_bot_setting", fake_set_bot_setting)
+    monkeypatch.setattr("app.services.google_sheets_sync.import_parse_result", fake_import_parse_result)
+
+    result = await sync_google_sheet_once()
+
+    assert result.status == "imported"
+    assert captured["mark_missing"] is False
+    assert captured["past_due_signal_action"] == "store_sent"
+    assert captured["committed"] is True
 
 def test_parse_schedule_minutes_sorts_and_deduplicates() -> None:
     assert parse_schedule_minutes("55, 10,25,40,10") == [10, 25, 40, 55]
