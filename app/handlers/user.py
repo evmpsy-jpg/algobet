@@ -180,7 +180,7 @@ def format_public_results(
         lines.append("пока нет оцененных сигналов")
         return "\n".join(lines)
 
-    for signal, match, result in visible_rows[:10]:
+    for signal, match, result in visible_rows[:25]:
         payload = signal.signal_payload or {}
         side = payload.get("side")
         side_text = f"П{side}" if side in (1, 2) else "—"
