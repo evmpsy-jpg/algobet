@@ -4,7 +4,7 @@
 
 ⏳ <b>Старт:</b> Через {lead_minutes} минут ({match_time} МСК)
 🏓 <b>Турнир:</b> {tournament_line}
-📌 <b>Матч:</b> {player_1_line} ⚔️ {player_2_line}
+📌 <b>Матч:</b> {match_link}
 
 🎯П1 = {p1_points} Бал. ⚔️ П2 = {p2_points} Бал. // из 10
 

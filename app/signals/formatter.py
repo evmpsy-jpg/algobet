@@ -35,6 +35,12 @@ def _player_with_rating(name: str, rating: int | None) -> str:
 def _html(value: Any) -> str:
     return escape(str(value or ""), quote=False)
 
+def _match_link(player_1_line: str, player_2_line: str, source_url: str | None) -> str:
+    label = f"{player_1_line} ⚔️ {player_2_line}"
+    href = str(source_url or "").strip()
+    if not href:
+        return _html(label)
+    return f"<a href=\"{escape(href, quote=True)}\">{_html(label)}</a>"
 
 def _signal_group_level(signal_group: str | None) -> str:
     return "VIP" if str(signal_group or "").strip().lower() == "vip" else "STANDART"
@@ -67,6 +73,11 @@ def format_signal(signal: Signal) -> str:
         "player_2": _html(signal.player_2),
         "player_1_line": _html(_player_with_rating(signal.player_1, signal.player_1_rating)),
         "player_2_line": _html(_player_with_rating(signal.player_2, signal.player_2_rating)),
+        "match_link": _match_link(
+            _player_with_rating(signal.player_1, signal.player_1_rating),
+            _player_with_rating(signal.player_2, signal.player_2_rating),
+            signal.source_url,
+        ),
         "signal_marker": signal_marker,
         "probability": _fmt(signal.probability, 0),
         "probability_p1": _fmt(signal.probability_p1, 0),

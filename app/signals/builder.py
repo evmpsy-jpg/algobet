@@ -22,6 +22,7 @@ def build_signal(match: MatchData, decision: SignalDecision) -> Signal:
         signal_group=str(payload.get("signal_group") or "all"),
         title=str(payload.get("title") or level_cfg.get("title") or "🎯 СИГНАЛ — НА СЕТ"),
         match_id=match.match_id,
+        source_url=match.source_url,
         tournament_name=match.tournament_name,
         match_time=match.match_time,
         player_1=match.player_1,

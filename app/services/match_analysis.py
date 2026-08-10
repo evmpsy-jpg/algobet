@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -56,6 +57,18 @@ def _fmt_number(value: Any, *, signed: bool = False, digits: int = 1) -> str:
     if number.is_integer():
         return f"{number:+.0f}" if signed else f"{number:.0f}"
     return f"{number:+.{digits}f}" if signed else f"{number:.{digits}f}"
+
+
+def _html(value: Any) -> str:
+    return escape(str(value or ""), quote=False)
+
+
+def _match_link(player_1_line: str, player_2_line: str, source_url: str | None) -> str:
+    label = f"{player_1_line} ⚔️ {player_2_line}"
+    href = str(source_url or "").strip()
+    if not href:
+        return _html(label)
+    return f"<a href=\"{escape(href, quote=True)}\">{_html(label)}</a>"
 
 
 def _tournament_line(name: str) -> str:
@@ -344,7 +357,7 @@ def build_match_analysis_text(match: Match) -> str:
         f"🏓 {_tournament_line(data.tournament_name)}",
         f"🕐 Начало: {_fmt_dt(data.match_start_at, '%H:%M')} МСК",
         "",
-        f"📌 {player_1} ⚔️ {player_2}",
+        f"📌 {_match_link(player_1, player_2, data.source_url)}",
         "",
         f"🎯П1 = {_fmt_number(data.all_signal_p1, signed=False, digits=0)} Бал. ⚔️ П2 = {_fmt_number(data.all_signal_p2, signed=False, digits=0)} Бал. // из 10",
         "",

@@ -83,6 +83,7 @@ class Signal:
     signal_group: str
     title: str
     match_id: int
+    source_url: str
     tournament_name: str
     match_time: str
     player_1: str
