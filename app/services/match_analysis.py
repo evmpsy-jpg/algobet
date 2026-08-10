@@ -97,6 +97,7 @@ def _match_data(match: Match) -> MatchData:
         player_1_rating=match.player_1_rating,
         player_2_rating=match.player_2_rating,
         score=match.score,
+        advantage=get("D"),
         h2h_games=get("CP"),
         form_p1=get("Q"),
         form_p2=get("X"),
@@ -164,6 +165,17 @@ def _number_or_none(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
+
+
+def _match_advantage_text(value: Any) -> str:
+    number = _number_or_none(value)
+    if number is None:
+        return "⚪ Нет преимущества"
+    if number > 0:
+        return f"🟢 Преимущество П1 = {_fmt_number(abs(number), signed=False, digits=0)} Бал."
+    if number < 0:
+        return f"🔴 Преимущество П2 = {_fmt_number(abs(number), signed=False, digits=0)} Бал."
+    return "⚪ Нет преимущества"
 
 def _set_advantage_line(index: int, value: Any) -> str:
     number = _number_or_none(value)
@@ -333,6 +345,10 @@ def build_match_analysis_text(match: Match) -> str:
         f"🕐 Начало: {_fmt_dt(data.match_start_at, '%H:%M')} МСК",
         "",
         f"📌 {player_1} ⚔️ {player_2}",
+        "",
+        f"🎯П1 = {_fmt_number(data.all_signal_p1, signed=False, digits=0)} Бал. ⚔️ П2 = {_fmt_number(data.all_signal_p2, signed=False, digits=0)} Бал. // из 10",
+        "",
+        _match_advantage_text(data.advantage),
         "",
         f" Вероятность: {_fmt_number(data.probability_p1, signed=False, digits=0)}% ⚔️   {_fmt_number(data.probability_p2, signed=False, digits=0)}%",
         f" Форма фаворита: {_fmt_number(data.favorite_form_p1, signed=False, digits=0)}% ⚔️   {_fmt_number(data.favorite_form_p2, signed=False, digits=0)}%",
