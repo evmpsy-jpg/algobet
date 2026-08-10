@@ -49,4 +49,7 @@ def build_signal(match: MatchData, decision: SignalDecision) -> Signal:
         set4_handicap=match.set4_handicap,
         set5_handicap=match.set5_handicap,
         lead_minutes=int(cfg["signal"].get("lead_minutes", 10)),
+        p1_points=match.all_signal_p1,
+        p2_points=match.all_signal_p2,
+        advantage=match.advantage,
     )

@@ -39,6 +39,17 @@ def _html(value: Any) -> str:
 def _signal_group_level(signal_group: str | None) -> str:
     return "VIP" if str(signal_group or "").strip().lower() == "vip" else "STANDART"
 
+def _advantage_text(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "⚪ Нет преимущества"
+    if number > 0:
+        return f"🟢 Преимущество П1 = {_fmt(abs(number), 0)} Бал."
+    if number < 0:
+        return f"🔴 Преимущество П2 = {_fmt(abs(number), 0)} Бал."
+    return "⚪ Нет преимущества"
+
 
 def format_signal(signal: Signal) -> str:
     path = Path("templates/signal.txt")
@@ -64,6 +75,9 @@ def format_signal(signal: Signal) -> str:
         "favorite_form_p1": _fmt(signal.favorite_form_p1, 0),
         "favorite_form_p2": _fmt(signal.favorite_form_p2, 0),
         "selected_player": _html(signal.selected_player),
+        "p1_points": _fmt(signal.p1_points, 0),
+        "p2_points": _fmt(signal.p2_points, 0),
+        "advantage_text": _html(_advantage_text(signal.advantage)),
         "set1_handicap": _fmt(signal.set1_handicap, 1, True),
         "set2_handicap": _fmt(signal.set2_handicap, 1, True),
         "set3_handicap": _fmt(signal.set3_handicap, 1, True),

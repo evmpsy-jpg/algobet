@@ -39,6 +39,7 @@ def normalize_match(parsed: ParsedMatch) -> MatchData:
         player_1_rating=parsed.player_1_rating,
         player_2_rating=parsed.player_2_rating,
         score=parsed.score,
+        advantage=get("advantage"),
         h2h_games=get("h2h_games"),
         form_p1=get("form_p1"),
         form_p2=get("form_p2"),

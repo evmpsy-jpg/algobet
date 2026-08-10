@@ -8,6 +8,7 @@ import yaml
 
 
 DEFAULT_MAPPING: dict[str, str] = {
+    "advantage": "D",
     "h2h_games": "CP",
     "form_p1": "Q",
     "form_p2": "X",

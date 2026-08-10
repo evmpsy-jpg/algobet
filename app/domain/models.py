@@ -19,6 +19,7 @@ class MatchData:
     player_1_rating: int | None = None
     player_2_rating: int | None = None
     score: str | None = None
+    advantage: float | None = None
 
     h2h_games: float | None = None
     form_p1: float | None = None
@@ -109,3 +110,6 @@ class Signal:
     set4_handicap: float | None
     set5_handicap: float | None
     lead_minutes: int
+    p1_points: float | None = None
+    p2_points: float | None = None
+    advantage: float | None = None
