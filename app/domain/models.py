@@ -36,6 +36,7 @@ class MatchData:
     p2_exact: float | None = None
     p1_range: float | None = None
     p2_range: float | None = None
+    signal_balance: float | None = None
     h2h_p1: float | None = None
     h2h_p2: float | None = None
     average_h2h_handicap: float | None = None

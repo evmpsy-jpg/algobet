@@ -8,7 +8,7 @@ COMPUTED_COLUMNS = (
     "AV", "AW", "AX", "AY", "AZ", "BA", "BD", "BE", "BF", "BG", "BH",
     "BI", "BJ", "BK", "BL", "BM", "BP", "BU", "BV", "BY", "BZ", "CA",
     "CB", "CC", "CD", "CO", "CP", "CQ", "CS", "CT", "CV", "CW", "DA",
-    "DG", "DH", "DP", "DS", "DV", "DY", "EF", "EG", "EH", "EI",
+    "DG", "DH", "DP", "DS", "DV", "DY", "EF", "EG", "EH", "EI", "EL",
 )
 
 INVALID_FORMULA_VALUES = {"", "#VALUE!", "#DIV/0!", "#N/A", "#REF!", "#NAME?", "#NUM!", "#NULL!"}

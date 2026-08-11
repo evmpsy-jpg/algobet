@@ -55,6 +55,7 @@ def normalize_match(parsed: ParsedMatch) -> MatchData:
         p2_exact=get("p2_exact"),
         p1_range=get("p1_range"),
         p2_range=get("p2_range"),
+        signal_balance=get("signal_balance"),
         h2h_p1=get("h2h_p1"),
         h2h_p2=get("h2h_p2"),
         average_h2h_handicap=get("average_h2h_handicap"),

@@ -24,6 +24,7 @@ DEFAULT_MAPPING: dict[str, str] = {
     "p2_exact": "EH",
     "p1_range": "CS",
     "p2_range": "CT",
+    "signal_balance": "EL",
     "h2h_p1": "AA",
     "h2h_p2": "AB",
     "average_h2h_handicap": "AI",

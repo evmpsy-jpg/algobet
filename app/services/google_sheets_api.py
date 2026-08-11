@@ -14,7 +14,7 @@ from app.services.excel_parser import DATE_RE, HYPERLINK_RE, PLAYER_RE, URL_IDS_
 from app.services.spreadsheet_metrics import calculate_signal_columns
 
 GOOGLE_SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
-DEFAULT_RANGE_COLUMNS = "A:EK"
+DEFAULT_RANGE_COLUMNS = "A:EL"
 DEFAULT_MAX_ROWS = 1200
 MATCH_TIME_RE = re.compile(r"^\d{1,2}:\d{2}")
 

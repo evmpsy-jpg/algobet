@@ -5,6 +5,7 @@ signal:
   lead_minutes: 10
   min_h2h_games: 5
   min_favorite_form: 7
+  min_standard_form: 6
   min_bg_p1: 1.3
   min_bf_p2: 1.3
   p1:
