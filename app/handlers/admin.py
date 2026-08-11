@@ -2200,7 +2200,7 @@ async def analysis_issue_callback(callback: CallbackQuery) -> None:
         analysis_text = build_match_analysis_text(match)
         user_telegram_id = request.telegram_id
     try:
-        await callback.bot.send_message(chat_id=user_telegram_id, text=analysis_text)
+        await callback.bot.send_message(chat_id=user_telegram_id, text=analysis_text, parse_mode="HTML", disable_web_page_preview=True)
     except Exception:
         await callback.answer("Не удалось отправить анализ клиенту", show_alert=True)
         return

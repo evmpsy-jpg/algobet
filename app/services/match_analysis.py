@@ -366,7 +366,7 @@ def build_match_analysis_text(match: Match) -> str:
         f" Вероятность: {_fmt_number(data.probability_p1, signed=False, digits=0)}% ⚔️   {_fmt_number(data.probability_p2, signed=False, digits=0)}%",
         f" Форма фаворита: {_fmt_number(data.favorite_form_p1, signed=False, digits=0)}% ⚔️   {_fmt_number(data.favorite_form_p2, signed=False, digits=0)}%",
         "",
-        f"👉 Фаворит по игре:  {favorite_player}",
+        f"👉 Фаворит по игре:  {_html(favorite_player)}",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",

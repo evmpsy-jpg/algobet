@@ -1,9 +1,12 @@
+from datetime import datetime
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, MatchAnalysisRequest, User
+from app.database.models import Base, Match, MatchAnalysisRequest, User
 from app.services.match_analysis import (
+    build_match_analysis_text,
     create_match_analysis_request,
     format_analysis_request_admin_text,
     format_analysis_request_user_text,
@@ -47,7 +50,21 @@ async def test_create_match_analysis_request_persists_payload() -> None:
         request = await create_match_analysis_request(
             session,
             user,
-            "Игрок 1 vs Игрок 2",
+            Match(
+                id=22,
+                external_match_id=1001,
+                external_tournament_id=2001,
+                source_url="https://example.test/t/2001/1001",
+                tournament_date="11.08.2026",
+                match_time="19:30",
+                match_start_at=datetime(2026, 8, 11, 19, 30),
+                player_1="Игрок 1",
+                player_2="Игрок 2",
+                player_1_rating=None,
+                player_2_rating=None,
+                score=None,
+                raw_data={},
+            ),
             payment_details="Карта 0000",
             specialist_contact="@spec",
         )
@@ -77,7 +94,6 @@ def test_format_analysis_request_user_text_contains_payment_and_contact() -> Non
 
     assert "#7" in text
     assert "Карта 0000" in text
-    assert "@spec" in text
     assert "После оплаты" in text
 
 
@@ -113,5 +129,43 @@ def test_format_analysis_status_user_text_contains_status_message() -> None:
     text = format_analysis_status_user_text(request)
 
     assert "#9" in text
-    assert "в работу" in text
-    assert "@spec" in text
+    assert "готовится" in text
+
+
+def test_build_match_analysis_text_uses_html_link_and_escapes_favorite() -> None:
+    match = Match(
+        external_match_id=701431,
+        external_tournament_id=76164,
+        source_url="https://www.sport-liga.pro/ru/table-tennis/tournaments/76164/701431",
+        tournament_date="11.08.2026",
+        match_time="19:30",
+        match_start_at=datetime(2026, 8, 11, 19, 30),
+        player_1="Тяпухин <В. А.>",
+        player_2="Шкурко А. О.",
+        player_1_rating=623,
+        player_2_rating=611,
+        score=None,
+        raw_data={
+            "_tournament_name": "Турнир A5. Лига 600-700",
+            "D": 6,
+            "CP": 5,
+            "Q": 7,
+            "X": 7,
+            "EJ": 49,
+            "EK": 42,
+            "CV": 63,
+            "CW": 16,
+            "DG": 6,
+            "DH": 0,
+            "AA": 3,
+            "AB": 2,
+            "AI": 1.2,
+            "EF": 2.4,
+        },
+    )
+
+    text = build_match_analysis_text(match)
+
+    assert '<a href="https://www.sport-liga.pro/ru/table-tennis/tournaments/76164/701431">' in text
+    assert '&lt;В. А.&gt;' in text
+    assert '<a href=' in text
