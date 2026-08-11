@@ -308,6 +308,7 @@ def _match_data_for_stats(match: Match) -> MatchData | None:
         p2_exact=get("p2_exact"),
         p1_range=get("p1_range"),
         p2_range=get("p2_range"),
+        signal_balance=get("signal_balance"),
         h2h_p1=get("h2h_p1"),
         h2h_p2=get("h2h_p2"),
         average_h2h_handicap=get("average_h2h_handicap"),
@@ -352,6 +353,7 @@ def signal_stats_eligible(match_or_raw_data: Match | dict[str, Any] | None, *, m
             columns["p2_exact"],
             columns["p1_range"],
             columns["p2_range"],
+            columns["signal_balance"],
         )
         if any(raw_data.get(key) is not None for key in rule_keys):
             match_data = _match_data_for_stats(match_or_raw_data)
