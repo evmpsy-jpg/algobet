@@ -154,10 +154,29 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     # Так VIP-выборка остается отдельной и не растворяется в STANDART.
     # ---------------------------------------------------------
     standard_min_form = float(rules.get("min_standard_form", 3))
+    extended_min_form = float(rules.get("min_extended_form", 5))
+    extended_min_probability = float(rules.get("min_extended_probability", 55))
+    extended_min_average_difference = float(rules.get("min_extended_average_difference", 0))
     vip_min_form = float(rules["min_favorite_form"])
 
     p1_all_form_ok = match.form_p1 is not None and match.form_p1 >= standard_min_form
     p2_all_form_ok = match.form_p2 is not None and match.form_p2 >= standard_min_form
+    p1_all_extended_ok = (
+        match.form_p1 is not None
+        and match.form_p1 >= extended_min_form
+        and match.probability_p1 is not None
+        and match.probability_p1 >= extended_min_probability
+        and match.average_difference is not None
+        and match.average_difference >= extended_min_average_difference
+    )
+    p2_all_extended_ok = (
+        match.form_p2 is not None
+        and match.form_p2 >= extended_min_form
+        and match.probability_p2 is not None
+        and match.probability_p2 >= extended_min_probability
+        and match.average_difference is not None
+        and -match.average_difference >= extended_min_average_difference
+    )
     p1_vip_form_ok = match.form_p1 is not None and match.form_p1 >= vip_min_form
     p2_vip_form_ok = match.form_p2 is not None and match.form_p2 >= vip_min_form
 
@@ -166,9 +185,9 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             _trace(
                 code="P1_FORM_ALL",
                 label="Форма P1 (Q) для ALL",
-                passed=p1_all_form_ok,
+                passed=p1_all_form_ok or p1_all_extended_ok,
                 actual=match.form_p1,
-                expected=f">= {standard_min_form:g}",
+                expected=f">= {standard_min_form:g} или расширение: форма >= {extended_min_form:g}, вероятность >= {extended_min_probability:g}, EF >= {extended_min_average_difference:g}",
                 side=1,
             )
         )
@@ -178,9 +197,9 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             _trace(
                 code="P2_FORM_ALL",
                 label="Форма P2 (X) для ALL",
-                passed=p2_all_form_ok,
+                passed=p2_all_form_ok or p2_all_extended_ok,
                 actual=match.form_p2,
-                expected=f">= {standard_min_form:g}",
+                expected=f">= {standard_min_form:g} или расширение: форма >= {extended_min_form:g}, вероятность >= {extended_min_probability:g}, -EF >= {extended_min_average_difference:g}",
                 side=2,
             )
         )
@@ -209,8 +228,8 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             )
         )
 
-    p1_all_ok = p1_all and cp_ok and p1_all_form_ok
-    p2_all_ok = p2_all and cp_ok and p2_all_form_ok
+    p1_all_ok = p1_all and cp_ok and (p1_all_form_ok or p1_all_extended_ok)
+    p2_all_ok = p2_all and cp_ok and (p2_all_form_ok or p2_all_extended_ok)
     p1_vip_ok = p1_vip and cp_ok and p1_vip_form_ok
     p2_vip_ok = p2_vip and cp_ok and p2_vip_form_ok
     p1_ok = p1_all_ok or p1_vip_ok
