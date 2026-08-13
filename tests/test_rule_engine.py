@@ -569,9 +569,9 @@ def test_standard_extension_accepts_form_five_with_probability_and_ef_protection
         make_match(
             all_signal_p1=8,
             form_p1=5,
-            probability_p1=60,
+            probability_p1=50,
             probability_p2=20,
-            average_difference=0,
+            average_difference=2.2,
         )
     )
 
@@ -585,10 +585,27 @@ def test_standard_extension_rejects_form_five_without_ef_protection() -> None:
         make_match(
             all_signal_p1=8,
             form_p1=5,
-            probability_p1=60,
+            probability_p1=50,
             probability_p2=20,
-            average_difference=-1,
+            average_difference=2.19,
         )
     )
 
     assert decision.suitable is False
+
+
+def test_standard_extension_accepts_p2_with_negative_ef_threshold() -> None:
+    decision = evaluate_match(
+        make_match(
+            all_signal_p1=None,
+            all_signal_p2=8,
+            form_p2=5,
+            probability_p1=20,
+            probability_p2=50,
+            average_difference=-2.2,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 2
+    assert decision.payload["signal_group"] == "all"
