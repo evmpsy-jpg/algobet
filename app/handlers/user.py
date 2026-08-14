@@ -552,10 +552,33 @@ def format_distance_system_information() -> str:
 <b>Как только сет выигран — дальше стоп игра.</b>
 <b>Если пропустили, не успели переставить — переходите к следующему сигналу.</b>"""
 
+
+def format_telegram_group_information() -> str:
+    return """<b>Наша информационная группа в ТГ</b>
+
+Новости
+События
+Рекомендации
+Обратная связь"""
+
+
+def telegram_group_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="ЗАЙТИ", url="https://t.me/LigaPro_NT")],
+        ]
+    )
+
+
 @router.message(F.text == "📚 Полезная информация")
 async def help_information_handler(message: Message) -> None:
     await message.answer(format_help_information(), parse_mode="HTML")
     await message.answer(format_distance_system_information(), parse_mode="HTML")
+    await message.answer(
+        format_telegram_group_information(),
+        parse_mode="HTML",
+        reply_markup=telegram_group_keyboard(),
+    )
 
 @router.message(F.text == "🏆 Результаты")
 async def public_results_handler(message: Message) -> None:

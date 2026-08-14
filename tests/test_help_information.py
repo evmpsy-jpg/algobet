@@ -1,4 +1,10 @@
-from app.handlers.user import WELCOME_MESSAGES, format_distance_system_information, format_help_information
+from app.handlers.user import (
+    WELCOME_MESSAGES,
+    format_distance_system_information,
+    format_help_information,
+    format_telegram_group_information,
+    telegram_group_keyboard,
+)
 
 
 def test_format_help_information_keeps_original_help() -> None:
@@ -25,6 +31,20 @@ def test_format_distance_system_information_mentions_strategy_sections() -> None
     assert "<b>Защитный режим</b>" in text
     assert "<b>⛔️ Табу:</b>" in text
     assert len(text) <= 4096
+
+
+def test_format_telegram_group_information_has_link_button() -> None:
+    text = format_telegram_group_information()
+    keyboard = telegram_group_keyboard()
+
+    assert "Наша информационная группа в ТГ" in text
+    assert "Новости" in text
+    assert "События" in text
+    assert "Рекомендации" in text
+    assert "Обратная связь" in text
+    assert keyboard.inline_keyboard[0][0].text == "ЗАЙТИ"
+    assert keyboard.inline_keyboard[0][0].url == "https://t.me/LigaPro_NT"
+
 
 def test_welcome_messages_introduce_product_before_menu() -> None:
     text = "\n".join(WELCOME_MESSAGES)
