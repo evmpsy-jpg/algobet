@@ -7,7 +7,7 @@ signal:
   min_favorite_form: 7
   min_standard_form: 6
   min_extended_form: 5
-  min_extended_probability: 50
+  min_extended_probability: 70
   min_extended_average_difference: 2.2
   min_bg_p1: 1.3
   min_bf_p2: 1.3
