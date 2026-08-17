@@ -223,10 +223,11 @@ def format_public_results(
         payload = signal.signal_payload or {}
         side = payload.get("side")
         side_text = f"П{side}" if side in (1, 2) else "—"
-        level = payload.get("level") or "—"
+        group = str(payload.get("signal_group") or "").strip().lower()
+        group_text = "VIP" if group == "vip" else "STANDART" if group == "all" else "—"
         sent_at = _fmt_dt(signal.sent_at or signal.send_at)
         lines.extend([
-            f"• {sent_at} · {result_short_label(result.status)} · {level} · {side_text}",
+            f"• {sent_at} · {result_short_label(result.status)} · {group_text} · {side_text}",
             f"  {match.player_1} — {match.player_2}",
         ])
         if match.score:

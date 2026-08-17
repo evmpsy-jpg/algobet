@@ -56,7 +56,8 @@ def test_format_public_results_shows_recent_results_without_admin_source() -> No
     assert "Оценено: 1 из 1" in text
     assert "Процент захода: 100.0%" in text
     assert "22.07 10:53" in text
-    assert "✅ · TOP · П1" in text
+    assert "✅ · VIP · П1" in text
+    assert "TOP" not in text
     assert "hidden signal text" not in text
     assert "счёт: 3:1" in text
     assert "авто" not in text
