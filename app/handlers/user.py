@@ -130,6 +130,20 @@ def _fmt_dt(value: datetime | None, fmt: str = "%d.%m %H:%M") -> str:
     return local.strftime(fmt) if local else "—"
 
 
+def _format_public_result_block(title: str, evaluated: int, total: int, won: int, lost: int, void: int) -> list[str]:
+    winrate = None
+    if won + lost:
+        winrate = won / (won + lost) * 100
+    return [
+        title,
+        f"Оценено: {evaluated} из {max(total, evaluated)}",
+        f"✅ Зашло: {won}",
+        f"❌ Не зашло: {lost}",
+        f"↩️ Возврат: {void}",
+        f"Процент захода: {format_winrate(winrate)}",
+    ]
+
+
 def format_public_results(
     rows: list[tuple],
     total_sent: int,
@@ -165,6 +179,11 @@ def format_public_results(
     official_winrate = None
     if official_won + official_lost:
         official_winrate = official_won / (official_won + official_lost) * 100
+    vip_counter = summary.by_group.get("vip")
+    all_counter = summary.by_group.get("all")
+    vip_total = vip_counter.total if vip_counter else 0
+    all_total = all_counter.total if all_counter else 0
+
     lines = [
         "🏆 Результаты сигналов",
         "",
@@ -174,8 +193,28 @@ def format_public_results(
         f"↩️ Возврат: {official_void}",
         f"Процент захода: {format_winrate(official_winrate)}",
         "",
-        "Последние результаты:",
     ]
+    if vip_counter is not None:
+        lines.extend(_format_public_result_block(
+            "VIP",
+            vip_counter.total,
+            vip_total,
+            vip_counter.won,
+            vip_counter.lost,
+            vip_counter.void,
+        ))
+        lines.append("")
+    if all_counter is not None:
+        lines.extend(_format_public_result_block(
+            "STANDART",
+            all_counter.total,
+            all_total,
+            all_counter.won,
+            all_counter.lost,
+            all_counter.void,
+        ))
+        lines.append("")
+    lines.append("Последние результаты:")
     if not visible_rows:
         lines.append("пока нет оцененных сигналов")
         return "\n".join(lines)

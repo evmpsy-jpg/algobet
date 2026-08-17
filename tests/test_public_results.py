@@ -41,7 +41,7 @@ def test_format_public_results_shows_recent_results_without_admin_source() -> No
         status="sent",
         send_at=datetime(2026, 7, 22, 7, 40),
         sent_at=datetime(2026, 7, 22, 7, 53),
-        signal_payload={"level": "TOP", "side": 1},
+        signal_payload={"level": "TOP", "side": 1, "signal_group": "vip"},
         message_text="signal text",
     )
     visible_match = make_match()
@@ -61,6 +61,42 @@ def test_format_public_results_shows_recent_results_without_admin_source() -> No
     assert "счёт: 3:1" in text
     assert "авто" not in text
     assert "вручную" not in text
+
+
+def test_format_public_results_shows_vip_and_standart_blocks() -> None:
+    vip_signal = ScheduledSignal(
+        id=11,
+        match_id=1,
+        status="sent",
+        send_at=datetime(2026, 7, 22, 7, 40),
+        sent_at=datetime(2026, 7, 22, 7, 53),
+        signal_payload={"level": "TOP", "side": 1, "signal_group": "vip"},
+        message_text="vip signal",
+    )
+    standart_signal = ScheduledSignal(
+        id=12,
+        match_id=2,
+        status="sent",
+        send_at=datetime(2026, 7, 22, 8, 40),
+        sent_at=datetime(2026, 7, 22, 8, 53),
+        signal_payload={"level": "STANDARD", "side": 2, "signal_group": "all"},
+        message_text="standard signal",
+    )
+    vip_match = make_match()
+    standart_match = make_match()
+    standart_match.score = "3:0"
+
+    text = format_public_results(
+        [
+            (vip_signal, vip_match, SignalResult(signal_id=11, status="won", source="auto")),
+            (standart_signal, standart_match, SignalResult(signal_id=12, status="lost", source="auto")),
+        ],
+        total_sent=2,
+    )
+
+    assert "VIP\nОценено: 1 из 1\n✅ Зашло: 1\n❌ Не зашло: 0" in text
+    assert "STANDART\nОценено: 1 из 1\n✅ Зашло: 0\n❌ Не зашло: 1" in text
+    assert text.index("VIP") < text.index("STANDART") < text.index("Последние результаты:")
 
 
 def test_format_public_results_handles_empty_history() -> None:
