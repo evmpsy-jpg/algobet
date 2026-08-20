@@ -60,6 +60,24 @@ async def _ensure_match_analysis_request_columns(connection) -> None:
             await connection.execute(text(f"ALTER TABLE match_analysis_requests ADD COLUMN {name} {definition}"))
 
 
+async def _ensure_player_birthdays_columns(connection) -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+    rows = await connection.execute(text("PRAGMA table_info(player_birthdays)"))
+    existing = {row[1] for row in rows.fetchall()}
+    columns = {
+        "birth_year": "INTEGER",
+        "source_name": "VARCHAR(255)",
+        "confidence": "VARCHAR(30) DEFAULT 'unverified'",
+        "confidence_score": "INTEGER",
+        "verification_status": "VARCHAR(30) DEFAULT 'new'",
+        "notes": "TEXT",
+    }
+    for name, definition in columns.items():
+        if existing and name not in existing:
+            await connection.execute(text(f"ALTER TABLE player_birthdays ADD COLUMN {name} {definition}"))
+
+
 async def init_db() -> None:
     settings.data_dir
     async with engine.begin() as connection:
@@ -67,3 +85,4 @@ async def init_db() -> None:
         await _ensure_user_access_columns(connection)
         await _ensure_web_admin_user_columns(connection)
         await _ensure_match_analysis_request_columns(connection)
+        await _ensure_player_birthdays_columns(connection)

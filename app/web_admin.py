@@ -1131,13 +1131,19 @@ def render_player_birthdays_html(players: list[PlayerBirthday], *, token: str = 
           <td>{escape(player.full_name)}</td>
           <td>{escape(player.short_name or "-")}</td>
           <td>{player.birth_date.strftime('%d.%m.%Y') if player.birth_date else '-'}</td>
+          <td>{escape(str(player.birth_year or (player.birth_date.year if player.birth_date else '-')))}</td>
+          <td class="optional">{escape(player.source_name or player.source or '-')}</td>
+          <td>{escape(player.confidence or '-')}</td>
+          <td>{escape(str(player.confidence_score)) if player.confidence_score is not None else '-'}</td>
+          <td>{escape(player.verification_status or '-')}</td>
           <td class="optional">{escape(str(player.external_player_id or '-'))}</td>
-          <td class="optional">{f'<a href="{escape(player.source_url)}" target="_blank" rel="noopener">Sport Liga Pro</a>' if player.source_url else '-'}</td>
+          <td class="optional">{f'<a href="{escape(player.source_url)}" target="_blank" rel="noopener">ссылка</a>' if player.source_url else '-'}</td>
+          <td class="optional">{escape(player.notes or '-')}</td>
           <td class="optional">{_fmt_dt(player.last_synced_at)}</td>
         </tr>
         """
         for player in players
-    ) or '<tr><td colspan="6" class="muted">Даты рождения игроков пока не загружены.</td></tr>'
+    ) or '<tr><td colspan="12" class="muted">Даты рождения игроков пока не загружены.</td></tr>'
     body = f"""
     <section><h2>Даты рождения игроков</h2>
       {message_html}
@@ -1151,12 +1157,12 @@ def render_player_birthdays_html(players: list[PlayerBirthday], *, token: str = 
         <button class="action-button" type="submit">Обновить с Sport Liga Pro</button>
       </form>
       <form class="settings-form" method="post" action="/players/import">
-        <label>Импорт CSV: full_name,birth_date,source_url,external_player_id</label>
-        <textarea name="csv_text" rows="5" placeholder="Игрок,Дата рождения,Ссылка,ID игрока"></textarea>
+        <label>Импорт CSV: full_name,birth_date,birth_year,source_name,source_url,confidence,confidence_score,verification_status,notes,external_player_id</label>
+        <textarea name="csv_text" rows="5" placeholder="ФИО;Дата рождения;Год рождения;Источник;Ссылка;Уверенность;Оценка совпадения;Статус;Комментарий;ID игрока"></textarea>
         <button class="action-button" type="submit">Импортировать список</button>
       </form>
       <p class="muted">Таблица доступна только web-админам. Источник: sport-liga.pro/ru/table-tennis/participants/players.</p>
-      <div class="table-scroll"><table><thead><tr><th>Игрок</th><th>Коротко</th><th>Дата рождения</th><th class="optional">ID</th><th class="optional">Источник</th><th class="optional">Обновлено</th></tr></thead><tbody>{rows}</tbody></table></div>
+      <div class="table-scroll"><table><thead><tr><th>Игрок</th><th>Коротко</th><th>Дата рождения</th><th>Год</th><th class="optional">Источник</th><th>Уверенность</th><th>Оценка</th><th>Статус</th><th class="optional">Sport Liga ID</th><th class="optional">Ссылка</th><th class="optional">Комментарий</th><th class="optional">Обновлено</th></tr></thead><tbody>{rows}</tbody></table></div>
     </section>
     """
     return _base_html("Даты рождения игроков", body, token=token)
@@ -1165,7 +1171,7 @@ def render_player_birthdays_html(players: list[PlayerBirthday], *, token: str = 
 def render_player_birthdays_csv(players: list[PlayerBirthday]) -> str:
     output = StringIO()
     writer = csv.writer(output, lineterminator="\n")
-    writer.writerow(["id", "external_player_id", "full_name", "short_name", "birth_date", "source_url", "last_synced_at"])
+    writer.writerow(["id", "external_player_id", "full_name", "short_name", "birth_date", "birth_year", "source", "source_name", "source_url", "confidence", "confidence_score", "verification_status", "notes", "last_synced_at"])
     for player in players:
         writer.writerow([
             player.id,
@@ -1173,7 +1179,14 @@ def render_player_birthdays_csv(players: list[PlayerBirthday]) -> str:
             player.full_name,
             player.short_name or "",
             player.birth_date.isoformat() if player.birth_date else "",
+            player.birth_year or "",
+            player.source or "",
+            player.source_name or "",
             player.source_url or "",
+            player.confidence or "",
+            player.confidence_score if player.confidence_score is not None else "",
+            player.verification_status or "",
+            player.notes or "",
             _fmt_dt(player.last_synced_at),
         ])
     return output.getvalue()
@@ -1330,7 +1343,7 @@ def render_signal_detail_html(detail: SignalDetail, *, token: str = "") -> str:
         <tr><td>#{delivery.id}</td><td>{escape(_label(delivery.status))}</td><td>{delivery.telegram_id}</td><td>{escape('@' + delivery.username if delivery.username else '-')}</td><td>{_fmt_dt(delivery.sent_at)}</td><td>{escape(delivery.error_text or '-')}</td></tr>
         """
         for delivery in detail.deliveries
-    ) or '<tr><td colspan="6" class="muted">Доставок пока нет.</td></tr>'
+    ) or '<tr><td colspan="12" class="muted">Доставок пока нет.</td></tr>'
     trace_rows = "".join(
         f"<tr><td>{escape(str(trace.get('code', '-')))}</td><td>{escape(str(trace.get('label', '-')))}</td><td>{escape(_bool_label(trace.get('passed', '-')))}</td><td>{escape(str(trace.get('actual', '-'))[:180])}</td></tr>"
         for trace in detail.decision_trace
@@ -1539,7 +1552,7 @@ def render_monitoring_html(summary: MonitoringSummary, *, token: str = "") -> st
         </tr>
         """
         for delivery in summary.failed_deliveries
-    ) or '<tr><td colspan="6" class="muted">Ошибок доставки нет.</td></tr>'
+    ) or '<tr><td colspan="12" class="muted">Ошибок доставки нет.</td></tr>'
     import_rows = "".join(
         f"""
         <tr>
@@ -1672,7 +1685,7 @@ def render_audit_html(logs: list[WebAdminActionLog], *, token: str = "") -> str:
         </tr>
         """
         for log in logs
-    ) or '<tr><td colspan="6" class="muted">Записей пока нет.</td></tr>'
+    ) or '<tr><td colspan="12" class="muted">Записей пока нет.</td></tr>'
     body = f"""
     <section><h2>Журнал действий</h2>
       <div class="filters"><a class="button" href="{_token_href('/audit/export.csv', token)}">CSV</a></div>

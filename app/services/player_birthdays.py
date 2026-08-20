@@ -29,6 +29,13 @@ class PlayerBirthdayRow:
     birth_date: date | None
     source_url: str | None = None
     external_player_id: int | None = None
+    birth_year: int | None = None
+    source: str = "manual"
+    source_name: str | None = None
+    confidence: str = "unverified"
+    confidence_score: int | None = None
+    verification_status: str = "new"
+    notes: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,18 @@ def parse_birth_date(value: str) -> date | None:
         return date(year, month, day)
     except ValueError:
         return None
+
+
+def parse_birth_year(value: str) -> int | None:
+    birth_date = parse_birth_date(value)
+    if birth_date is not None:
+        return birth_date.year
+    match = re.search(r"\b(19\d{2}|20\d{2})\b", value or "")
+    if not match:
+        return None
+    year = int(match.group(1))
+    current_year = datetime.utcnow().year
+    return year if 1900 <= year <= current_year else None
 
 
 def _clean_html_text(value: str) -> str:
@@ -124,8 +143,15 @@ def parse_player_birthdays_csv(text: str) -> list[PlayerBirthdayRow]:
     aliases = {
         "full_name": {"full_name", "name", "player", "игрок", "фио", "имя"},
         "birth_date": {"birth_date", "birthday", "date_of_birth", "дата рождения", "др"},
-        "source_url": {"source_url", "url", "link", "ссылка", "источник"},
-        "external_player_id": {"external_player_id", "player_id", "id", "id игрока"},
+        "birth_year": {"birth_year", "year", "год рождения", "год"},
+        "source_url": {"source_url", "url", "link", "ссылка", "ссылка на источник"},
+        "source": {"source", "source_code", "код источника"},
+        "source_name": {"source_name", "источник", "название источника"},
+        "external_player_id": {"external_player_id", "player_id", "sport_liga_id", "id", "id игрока"},
+        "confidence": {"confidence", "уверенность", "confidence_label"},
+        "confidence_score": {"confidence_score", "score", "процент", "оценка совпадения"},
+        "verification_status": {"verification_status", "status", "статус", "проверка"},
+        "notes": {"notes", "note", "комментарий", "примечание"},
     }
 
     def value(row: dict[str, str], key: str) -> str:
@@ -138,11 +164,19 @@ def parse_player_birthdays_csv(text: str) -> list[PlayerBirthdayRow]:
     for raw_row in reader:
         name = value(raw_row, "full_name")
         birth_date = parse_birth_date(value(raw_row, "birth_date"))
+        birth_year = parse_birth_year(value(raw_row, "birth_year") or value(raw_row, "birth_date"))
         source_url = value(raw_row, "source_url") or None
         external_raw = value(raw_row, "external_player_id")
         external_id = int(external_raw) if external_raw.isdigit() else _extract_player_id(source_url)
-        if name and birth_date:
-            rows.append(PlayerBirthdayRow(name, birth_date, source_url, external_id))
+        confidence_score_raw = value(raw_row, "confidence_score")
+        confidence_score = int(confidence_score_raw) if confidence_score_raw.isdigit() else None
+        source_name = value(raw_row, "source_name") or None
+        source = value(raw_row, "source") or (source_name.lower() if source_name else "manual")
+        confidence = value(raw_row, "confidence") or ("high" if confidence_score is not None and confidence_score >= 90 else "unverified")
+        status = value(raw_row, "verification_status") or ("verified" if confidence in {"high", "confirmed", "verified"} else "new")
+        notes = value(raw_row, "notes") or None
+        if name and (birth_date is not None or birth_year is not None):
+            rows.append(PlayerBirthdayRow(name, birth_date, source_url, external_id, birth_year, source, source_name, confidence, confidence_score, status, notes))
     return rows
 
 
@@ -178,7 +212,8 @@ async def upsert_player_birthdays(session: AsyncSession, rows: list[PlayerBirthd
     now = datetime.utcnow()
     for row in rows:
         full_name = row.full_name.strip()
-        if not full_name or row.birth_date is None:
+        birth_year = row.birth_year or (row.birth_date.year if row.birth_date is not None else None)
+        if not full_name or (row.birth_date is None and birth_year is None):
             skipped += 1
             continue
         conditions = []
@@ -194,7 +229,14 @@ async def upsert_player_birthdays(session: AsyncSession, rows: list[PlayerBirthd
                 full_name=full_name,
                 short_name=short_player_name(full_name),
                 birth_date=row.birth_date,
+                birth_year=birth_year,
                 source_url=row.source_url,
+                source=row.source or "manual",
+                source_name=row.source_name,
+                confidence=row.confidence or "unverified",
+                confidence_score=row.confidence_score,
+                verification_status=row.verification_status or "new",
+                notes=row.notes,
                 last_synced_at=now,
             ))
             inserted += 1
@@ -205,7 +247,14 @@ async def upsert_player_birthdays(session: AsyncSession, rows: list[PlayerBirthd
                 "full_name": full_name,
                 "short_name": short_player_name(full_name),
                 "birth_date": row.birth_date,
+                "birth_year": birth_year,
                 "source_url": row.source_url,
+                "source": row.source or "manual",
+                "source_name": row.source_name,
+                "confidence": row.confidence or "unverified",
+                "confidence_score": row.confidence_score,
+                "verification_status": row.verification_status or "new",
+                "notes": row.notes,
             }.items():
                 if value is not None and getattr(existing, attr) != value:
                     setattr(existing, attr, value)
