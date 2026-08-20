@@ -157,6 +157,10 @@ def enrich_candidate(player_name: str, candidate: RttfCandidate) -> RttfCandidat
     )
 
 
+def is_plausible_auto_birth_year(year: int | None) -> bool:
+    return year is not None and 1940 <= year <= 2010
+
+
 def find_best_rttf_match(player_name: str, *, max_candidates: int = 5, delay: float = 0.2) -> RttfCandidate:
     candidates = search_rttf_candidates(player_name, max_candidates=max_candidates)
     enriched = []
@@ -235,7 +239,7 @@ async def main() -> None:
             "reason": best.reason,
         }
         rows.append(row)
-        if args.apply and best.confidence == "high" and best.status == "verified" and best.birth_date:
+        if args.apply and best.confidence == "high" and best.status == "verified" and best.birth_date and is_plausible_auto_birth_year(best.birth_year):
             apply_rows.append(PlayerBirthdayRow(
                 full_name=player_name,
                 birth_date=parse_birth_date(best.birth_date),
