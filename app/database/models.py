@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -257,6 +257,21 @@ class SignalDecisionLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     match: Mapped[Match] = relationship(back_populates="decision_logs")
+
+
+class PlayerBirthday(Base):
+    __tablename__ = "player_birthdays"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_player_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
+    full_name: Mapped[str] = mapped_column(String(255), index=True)
+    short_name: Mapped[str | None] = mapped_column(String(255), index=True)
+    birth_date: Mapped[date | None] = mapped_column(Date, index=True)
+    source_url: Mapped[str | None] = mapped_column(String(1000), unique=True)
+    source: Mapped[str] = mapped_column(String(100), default="sport-liga.pro", index=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class WebAdminUser(Base):

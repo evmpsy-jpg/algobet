@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import hashlib
@@ -20,12 +21,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from aiogram import Bot
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 
-from app.database.models import MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, WebAdminActionLog, WebAdminUser
+from app.database.models import MatchAnalysisRequest, PlayerBirthday, ScheduledSignal, SignalResult, SubscriptionRequest, User, WebAdminActionLog, WebAdminUser
 from app.database.session import SessionFactory, init_db
 from app.services.access import disable_access, grant_subscription_access, grant_subscription_plan_access, grant_trial_access
 from app.services.signal_sender import process_delivery_now
+from app.services.player_birthdays import fetch_player_birthdays_from_sport_liga, parse_player_birthdays_csv, upsert_player_birthdays
 from app.services.sqlite_backup import BackupVerification, create_sqlite_backup, verify_sqlite_backup
 from app.services.bot_settings import (
     ANALYSIS_PAYMENT_DETAILS_KEY,
@@ -231,12 +233,15 @@ LABELS = {
     "web_admin_create": "Создание web-админа",
     "web_admin_password_update": "Смена пароля web-админа",
     "web_admin_deactivate": "Отключение web-админа",
+    "player_birthdays_sync": "Синхронизация игроков",
+    "player_birthdays_import": "Импорт игроков",
     "web_admin_role_update": "Изменение роли web-админа",
     "web_admin": "Web-админ",
     "signal": "Сигнал",
     "subscription_request": "Заявка на подписку",
     "analysis_request": "Заявка на анализ",
     "settings": "Настройки",
+    "player_birthdays": "Даты рождения игроков",
 }
 
 
@@ -603,6 +608,25 @@ class WebAdminActivityItem:
     last_login_at: datetime | None = None
 
 
+
+async def collect_player_birthdays(session, *, search: str = "", limit: int = 500) -> list[PlayerBirthday]:
+    query = select(PlayerBirthday).order_by(PlayerBirthday.full_name).limit(limit)
+    if search:
+        pattern = f"%{search}%"
+        query = (
+            select(PlayerBirthday)
+            .where(
+                or_(
+                    PlayerBirthday.full_name.ilike(pattern),
+                    PlayerBirthday.short_name.ilike(pattern),
+                )
+            )
+            .order_by(PlayerBirthday.full_name)
+            .limit(limit)
+        )
+    return list((await session.scalars(query)).all())
+
+
 async def collect_web_admin_activity(session, configured_usernames: list[str]) -> list[WebAdminActivityItem]:
     since = datetime.utcnow() - timedelta(days=7)
     logs = list(
@@ -670,6 +694,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Статистика", "/quality"),
             ("Мониторинг", "/monitoring"),
             ("Пользователи", "/users"),
+            ("Игроки", "/players"),
             ("Подписки", "/subscriptions"),
             ("Заявки", "/requests"),
             ("Настройки", "/settings"),
@@ -1095,6 +1120,63 @@ def render_users_html(users: list[UserListItem], *, token: str = "", search: str
     """
     return _base_html("Пользователи", body, token=token)
 
+
+
+def render_player_birthdays_html(players: list[PlayerBirthday], *, token: str = "", search: str = "", message: str = "") -> str:
+    search_value = escape(search)
+    message_html = f'<p class="pill"><b>{escape(message)}</b></p>' if message else ""
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(player.full_name)}</td>
+          <td>{escape(player.short_name or "-")}</td>
+          <td>{player.birth_date.strftime('%d.%m.%Y') if player.birth_date else '-'}</td>
+          <td class="optional">{escape(str(player.external_player_id or '-'))}</td>
+          <td class="optional">{f'<a href="{escape(player.source_url)}" target="_blank" rel="noopener">Sport Liga Pro</a>' if player.source_url else '-'}</td>
+          <td class="optional">{_fmt_dt(player.last_synced_at)}</td>
+        </tr>
+        """
+        for player in players
+    ) or '<tr><td colspan="6" class="muted">Даты рождения игроков пока не загружены.</td></tr>'
+    body = f"""
+    <section><h2>Даты рождения игроков</h2>
+      {message_html}
+      <form class="actions" method="get" action="/players">
+        <input name="search" value="{search_value}" placeholder="Фамилия или имя игрока" autocomplete="off">
+        <button class="action-button" type="submit">Найти</button>
+        <a class="button" href="{_token_href('/players', token)}">Сбросить</a>
+        <a class="button" href="{_token_href('/players/export.csv', token)}">CSV</a>
+      </form>
+      <form class="actions" method="post" action="/players/sync">
+        <button class="action-button" type="submit">Обновить с Sport Liga Pro</button>
+      </form>
+      <form class="settings-form" method="post" action="/players/import">
+        <label>Импорт CSV: full_name,birth_date,source_url,external_player_id</label>
+        <textarea name="csv_text" rows="5" placeholder="Игрок,Дата рождения,Ссылка,ID игрока"></textarea>
+        <button class="action-button" type="submit">Импортировать список</button>
+      </form>
+      <p class="muted">Таблица доступна только web-админам. Источник: sport-liga.pro/ru/table-tennis/participants/players.</p>
+      <div class="table-scroll"><table><thead><tr><th>Игрок</th><th>Коротко</th><th>Дата рождения</th><th class="optional">ID</th><th class="optional">Источник</th><th class="optional">Обновлено</th></tr></thead><tbody>{rows}</tbody></table></div>
+    </section>
+    """
+    return _base_html("Даты рождения игроков", body, token=token)
+
+
+def render_player_birthdays_csv(players: list[PlayerBirthday]) -> str:
+    output = StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(["id", "external_player_id", "full_name", "short_name", "birth_date", "source_url", "last_synced_at"])
+    for player in players:
+        writer.writerow([
+            player.id,
+            player.external_player_id or "",
+            player.full_name,
+            player.short_name or "",
+            player.birth_date.isoformat() if player.birth_date else "",
+            player.source_url or "",
+            _fmt_dt(player.last_synced_at),
+        ])
+    return output.getvalue()
 
 def render_subscriptions_html(
     users: list[UserListItem],
@@ -2148,6 +2230,78 @@ async def audit_export(_: Annotated[str, Depends(require_web_admin)], request: R
         ).all()
     content = render_audit_csv(list(logs))
     return _csv_response(content, "algobet-audit.csv")
+
+
+@app.get("/players", response_class=HTMLResponse)
+async def players(_: Annotated[str, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    search = (request.query_params.get("search") or "").strip()
+    message = request.query_params.get("message") or ""
+    async with SessionFactory() as session:
+        rows = await collect_player_birthdays(session, search=search)
+    return HTMLResponse(render_player_birthdays_html(rows, token="", search=search, message=message))
+
+
+@app.get("/players/export.csv")
+async def players_export(_: Annotated[str, Depends(require_web_admin)], request: Request) -> Response:
+    search = (request.query_params.get("search") or "").strip()
+    async with SessionFactory() as session:
+        rows = await collect_player_birthdays(session, search=search, limit=10000)
+    return _csv_response(render_player_birthdays_csv(rows), "algobet-player-birthdays.csv")
+
+
+@app.post("/players/import")
+async def players_import(request: Request, actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+    fields = await _read_form_fields(request)
+    try:
+        rows = parse_player_birthdays_csv(fields.get("csv_text", ""))
+        async with SessionFactory() as session:
+            summary = await upsert_player_birthdays(session, rows)
+            await log_web_admin_action(
+                session,
+                actor_username=actor_username,
+                action="player_birthdays_import",
+                target_type="player_birthdays",
+                target_id=None,
+                details={
+                    "parsed": summary.parsed,
+                    "inserted": summary.inserted,
+                    "updated": summary.updated,
+                    "skipped": summary.skipped,
+                },
+            )
+            await session.commit()
+    except Exception as exc:
+        message = f"Не удалось импортировать: {exc}"[:300]
+        return RedirectResponse(url=f"/players?{urlencode({'message': message})}", status_code=status.HTTP_303_SEE_OTHER)
+    message = f"Импортировано: строк {summary.parsed}, новых {summary.inserted}, обновлено {summary.updated}, пропущено {summary.skipped}"
+    return RedirectResponse(url=f"/players?{urlencode({'message': message})}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/players/sync")
+async def players_sync(actor_username: Annotated[str, Depends(require_web_admin)]) -> RedirectResponse:
+    try:
+        rows = await asyncio.to_thread(fetch_player_birthdays_from_sport_liga)
+        async with SessionFactory() as session:
+            summary = await upsert_player_birthdays(session, rows)
+            await log_web_admin_action(
+                session,
+                actor_username=actor_username,
+                action="player_birthdays_sync",
+                target_type="player_birthdays",
+                target_id=None,
+                details={
+                    "parsed": summary.parsed,
+                    "inserted": summary.inserted,
+                    "updated": summary.updated,
+                    "skipped": summary.skipped,
+                },
+            )
+            await session.commit()
+    except Exception as exc:
+        message = f"Не удалось обновить: {exc}"[:300]
+        return RedirectResponse(url=f"/players?{urlencode({'message': message})}", status_code=status.HTTP_303_SEE_OTHER)
+    message = f"Обновлено: найдено {summary.parsed}, новых {summary.inserted}, обновлено {summary.updated}, пропущено {summary.skipped}"
+    return RedirectResponse(url=f"/players?{urlencode({'message': message})}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/settings", response_class=HTMLResponse)
