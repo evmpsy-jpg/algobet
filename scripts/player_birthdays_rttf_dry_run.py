@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from app.database.models import Match, PlayerBirthday
 from app.database.session import SessionFactory
-from app.services.player_birthdays import parse_birth_date, parse_birth_year, short_player_name
+from app.services.player_birthdays import PlayerBirthdayRow, parse_birth_date, parse_birth_year, short_player_name, upsert_player_birthdays
 
 RTTF_BASE_URL = "https://rttf.ru/"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
@@ -202,16 +202,18 @@ def write_report(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Dry-run RTTF birthday lookup for Algobet players. No database writes.")
+    parser = argparse.ArgumentParser(description="RTTF birthday lookup for Algobet players. Dry-run by default; --apply writes only high-confidence matches.")
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument("--max-candidates", type=int, default=5)
     parser.add_argument("--delay", type=float, default=0.3)
     parser.add_argument("--include-existing", action="store_true")
     parser.add_argument("--out", default="")
+    parser.add_argument("--apply", action="store_true", help="Write high-confidence verified matches to player_birthdays")
     args = parser.parse_args()
 
     players = await collect_unique_players(limit=args.limit, missing_only=not args.include_existing)
     rows = []
+    apply_rows: list[PlayerBirthdayRow] = []
     counts = {"high": 0, "medium": 0, "low": 0, "not_found": 0}
     for index, player_name in enumerate(players, start=1):
         try:
@@ -233,13 +235,38 @@ async def main() -> None:
             "reason": best.reason,
         }
         rows.append(row)
-        print(f"{index:03d}/{len(players)} {player_name} -> {row['rttf_name'] or '-'} | {row['birth_date'] or row['birth_year'] or '-'} | {best.confidence} {best.score} | {best.reason}")
+        if args.apply and best.confidence == "high" and best.status == "verified" and best.birth_date:
+            apply_rows.append(PlayerBirthdayRow(
+                full_name=player_name,
+                birth_date=parse_birth_date(best.birth_date),
+                source_url=best.url,
+                external_player_id=None,
+                birth_year=best.birth_year,
+                source="rttf",
+                source_name="RTTF",
+                confidence=best.confidence,
+                confidence_score=best.score,
+                verification_status=best.status,
+                notes=f"RTTF: {best.profile_name}; {best.reason}",
+            ))
+        mode = "APPLY" if args.apply else "DRY"
+        print(f"{index:03d}/{len(players)} [{mode}] {player_name} -> {row['rttf_name'] or '-'} | {row['birth_date'] or row['birth_year'] or '-'} | {best.confidence} {best.score} | {best.reason}")
         time.sleep(args.delay)
 
-    out = Path(args.out) if args.out else Path("data") / f"player_birthdays_rttf_dry_run_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
+    summary = None
+    if args.apply and apply_rows:
+        async with SessionFactory() as session:
+            summary = await upsert_player_birthdays(session, apply_rows)
+
+    suffix = "apply" if args.apply else "dry_run"
+    out = Path(args.out) if args.out else Path("data") / f"player_birthdays_rttf_{suffix}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
     write_report(out, rows)
     print("\nSummary")
     print(f"players={len(players)} high={counts.get('high', 0)} medium={counts.get('medium', 0)} low={counts.get('low', 0)} not_found={counts.get('not_found', 0)}")
+    if summary is not None:
+        print(f"applied parsed={summary.parsed} inserted={summary.inserted} updated={summary.updated} skipped={summary.skipped}")
+    elif args.apply:
+        print("applied parsed=0 inserted=0 updated=0 skipped=0")
     print(f"report={out}")
 
 
