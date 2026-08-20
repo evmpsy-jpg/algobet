@@ -144,6 +144,15 @@ def _format_public_result_block(title: str, evaluated: int, total: int, won: int
     ]
 
 
+def _public_signal_group_label(payload: dict | None) -> str:
+    group = str((payload or {}).get("signal_group") or "").strip().lower()
+    if group == "vip":
+        return "VIP"
+    if group == "all":
+        return "STANDARD"
+    return "—"
+
+
 def format_public_results(
     rows: list[tuple],
     total_sent: int,
@@ -206,7 +215,7 @@ def format_public_results(
         lines.append("")
     if all_counter is not None:
         lines.extend(_format_public_result_block(
-            "STANDART",
+            "STANDARD",
             all_counter.total,
             all_total,
             all_counter.won,
@@ -223,8 +232,7 @@ def format_public_results(
         payload = signal.signal_payload or {}
         side = payload.get("side")
         side_text = f"П{side}" if side in (1, 2) else "—"
-        group = str(payload.get("signal_group") or "").strip().lower()
-        group_text = "VIP" if group == "vip" else "STANDART" if group == "all" else "—"
+        group_text = _public_signal_group_label(payload)
         sent_at = _fmt_dt(signal.sent_at or signal.send_at)
         lines.extend([
             f"• {sent_at} · {result_short_label(result.status)} · {group_text} · {side_text}",
@@ -372,8 +380,8 @@ def format_tournament_analytics(
             payload = signal.signal_payload or {}
             side = payload.get("side")
             side_text = f"П{side}" if side in (1, 2) else "—"
-            level = payload.get("level") or "—"
-            lines.append(f"• {_fmt_dt(signal.send_at)} · {level} · {side_text} · {match.player_1} — {match.player_2}")
+            group_text = _public_signal_group_label(payload)
+            lines.append(f"• {_fmt_dt(signal.send_at)} · {group_text} · {side_text} · {match.player_1} — {match.player_2}")
     else:
         lines.append("пока нет ближайших сигналов")
     return "\n".join(lines)[:3900]

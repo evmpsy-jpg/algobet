@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 
 from app.database.models import Match, ScheduledSignal, SignalResult
 from app.handlers.user import format_public_results
@@ -64,7 +64,7 @@ def test_format_public_results_shows_recent_results_without_admin_source() -> No
     assert "вручную" not in text
 
 
-def test_format_public_results_shows_vip_and_standart_blocks() -> None:
+def test_format_public_results_shows_vip_and_standard_blocks() -> None:
     vip_signal = ScheduledSignal(
         id=11,
         match_id=1,
@@ -74,7 +74,7 @@ def test_format_public_results_shows_vip_and_standart_blocks() -> None:
         signal_payload={"level": "TOP", "side": 1, "signal_group": "vip"},
         message_text="vip signal",
     )
-    standart_signal = ScheduledSignal(
+    standard_signal = ScheduledSignal(
         id=12,
         match_id=2,
         status="sent",
@@ -84,20 +84,20 @@ def test_format_public_results_shows_vip_and_standart_blocks() -> None:
         message_text="standard signal",
     )
     vip_match = make_match()
-    standart_match = make_match()
-    standart_match.score = "3:0"
+    standard_match = make_match()
+    standard_match.score = "3:0"
 
     text = format_public_results(
         [
             (vip_signal, vip_match, SignalResult(signal_id=11, status="won", source="auto")),
-            (standart_signal, standart_match, SignalResult(signal_id=12, status="lost", source="auto")),
+            (standard_signal, standard_match, SignalResult(signal_id=12, status="lost", source="auto")),
         ],
         total_sent=2,
     )
 
     assert "VIP\nОценено: 1 из 1\n✅ Зашло: 1\n❌ Не зашло: 0" in text
-    assert "STANDART\nОценено: 1 из 1\n✅ Зашло: 0\n❌ Не зашло: 1" in text
-    assert text.index("VIP") < text.index("STANDART") < text.index("Последние результаты:")
+    assert "STANDARD\nОценено: 1 из 1\n✅ Зашло: 0\n❌ Не зашло: 1" in text
+    assert text.index("VIP") < text.index("STANDARD") < text.index("Последние результаты:")
 
 
 def test_format_public_results_handles_empty_history() -> None:

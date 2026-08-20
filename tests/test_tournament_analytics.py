@@ -51,7 +51,7 @@ def test_format_tournament_analytics_shows_matches_and_signals() -> None:
         match_id=1,
         status="scheduled",
         send_at=datetime(2026, 7, 22, 7, 40),
-        signal_payload={"level": "TOP", "side": 1},
+        signal_payload={"level": "TOP", "side": 1, "signal_group": "vip"},
         message_text="signal",
     )
 
@@ -69,7 +69,8 @@ def test_format_tournament_analytics_shows_matches_and_signals() -> None:
     assert "Запланированных сигналов: 2" in text
     assert "Готовых к отправке: 1" in text
     assert "Ближайшие матчи" not in text
-    assert "22.07 10:40 · TOP · П1" in text
+    assert "22.07 10:40 · VIP · П1" in text
+    assert "TOP" not in text
 
 def test_format_tournament_analytics_shows_all_provided_signals() -> None:
     batch = ImportBatch(
@@ -91,7 +92,7 @@ def test_format_tournament_analytics_shows_all_provided_signals() -> None:
             match_id=index + 1,
             status="scheduled",
             send_at=datetime(2026, 7, 22, 8, index),
-            signal_payload={"level": "STANDARD", "side": 2},
+            signal_payload={"level": "STANDARD", "side": 2, "signal_group": "all"},
             message_text="signal",
         )
         if index == 0:
@@ -108,6 +109,7 @@ def test_format_tournament_analytics_shows_all_provided_signals() -> None:
     )
 
     assert text.count("STANDARD · П2") == 6
+    assert "STRONG" not in text
     assert "Игрок 1" not in text
 
 def test_filter_accessible_signal_rows_respects_subscription_groups() -> None:
