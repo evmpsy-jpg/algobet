@@ -6,9 +6,9 @@ from sqlalchemy import func, select
 import app.services.import_service as import_service
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, Match, MatchSnapshot, ScheduledSignal, SignalDecisionLog, SignalResult
+from app.database.models import Base, ImportBatch, Match, MatchSnapshot, ScheduledSignal, SignalDecisionLog, SignalResult
 from app.services.excel_parser import ParsedMatch, ParseResult
-from app.services.import_service import import_parse_result
+from app.services.import_service import import_parse_result, prune_match_snapshots
 
 
 class FrozenDateTime(datetime):
@@ -222,3 +222,34 @@ async def test_import_parse_result_deduplicates_same_external_match_id(monkeypat
     assert signal_count == 1
 
     await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_prune_match_snapshots_keeps_latest_imports_only() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with factory() as session:
+        for index in range(12):
+            batch = ImportBatch(
+                file_name=f"batch-{index}",
+                stored_path=f"batch-{index}",
+                file_sha256=f"hash-{index}",
+                uploaded_by_telegram_id=1,
+                status="completed",
+            )
+            session.add(batch)
+            await session.flush()
+            session.add(MatchSnapshot(import_batch_id=batch.id, external_match_id=index, data={"index": index}))
+        await session.commit()
+
+        await prune_match_snapshots(session, keep_imports=10)
+        await session.commit()
+
+        snapshot_batches = list((await session.scalars(select(MatchSnapshot.import_batch_id).order_by(MatchSnapshot.import_batch_id))).all())
+
+    await engine.dispose()
+
+    assert len(snapshot_batches) == 10
+    assert snapshot_batches == list(range(3, 13))

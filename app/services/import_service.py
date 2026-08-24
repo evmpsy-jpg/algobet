@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.settings import get_settings
@@ -38,6 +38,17 @@ class ImportSummary:
     scheduled_by_group: dict[str, int]
     rejection_reasons: dict[str, int]
     warnings: list[str]
+
+
+MATCH_SNAPSHOT_IMPORT_RETENTION = 10
+
+
+async def prune_match_snapshots(session: AsyncSession, *, keep_imports: int = MATCH_SNAPSHOT_IMPORT_RETENTION) -> None:
+    if keep_imports <= 0:
+        await session.execute(delete(MatchSnapshot))
+        return
+    keep_ids = select(ImportBatch.id).order_by(desc(ImportBatch.id)).limit(keep_imports)
+    await session.execute(delete(MatchSnapshot).where(MatchSnapshot.import_batch_id.not_in(keep_ids)))
 
 
 def calculate_sha256(path: Path) -> str:
@@ -266,6 +277,7 @@ async def import_parse_result(
     batch.missing_matches = len(missing_matches)
     batch.error_text = "\n".join(warnings) if warnings else None
     batch.finished_at = datetime.utcnow()
+    await prune_match_snapshots(session)
     await session.commit()
 
     return ImportSummary(
