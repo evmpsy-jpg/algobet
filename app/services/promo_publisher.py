@@ -100,6 +100,8 @@ def format_promo_signal_post(signal: ScheduledSignal, match: Match, result: Sign
         f"Счет матча: {escape(str(match.score or '—'), quote=False)}",
         "",
         _result_line(result.status),
+        "",
+        "@algobett_bot",
     ]
     return "\n".join(lines)
 

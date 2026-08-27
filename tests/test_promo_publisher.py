@@ -37,6 +37,7 @@ def test_format_promo_signal_post_won_vip() -> None:
     assert "👉 Выбор: Победа в сете - Борисов А. С." in text
     assert "Счет матча: 1:3" in text
     assert "🟢 ЗАШЕЛ" in text
+    assert text.endswith("@algobett_bot")
 
 
 def test_format_promo_signal_post_lost_standard() -> None:
