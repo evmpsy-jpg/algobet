@@ -623,3 +623,16 @@ def test_standard_extension_rejects_probability_below_sixty_five() -> None:
     )
 
     assert decision.suitable is False
+
+def test_excludes_tournament_a15_from_signals() -> None:
+    decision = evaluate_match(make_match(tournament_name="Турнир A15. Лига 400-450"))
+
+    assert decision.suitable is False
+    assert "A15" in str(decision.reason)
+
+
+def test_excludes_tournament_cyrillic_a15_from_signals() -> None:
+    decision = evaluate_match(make_match(tournament_name="Турнир А15. Лига 400-450"))
+
+    assert decision.suitable is False
+    assert "A15" in str(decision.reason)

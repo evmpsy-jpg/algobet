@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.domain.models import MatchData, RuleTrace, SignalDecision
@@ -20,6 +21,23 @@ def _base_condition(
         exact == float(config["exact_value"])
         or range_value in allowed
     )
+
+
+
+def _normalize_tournament_code(value: object) -> str:
+    return str(value).strip().upper().replace("А", "A")
+
+
+def _matched_excluded_tournament_code(tournament_name: str, codes: list[Any]) -> str | None:
+    normalized_name = _normalize_tournament_code(tournament_name)
+    for raw_code in codes:
+        code = _normalize_tournament_code(raw_code)
+        if not code:
+            continue
+        pattern = rf"(?<![A-ZА-Я0-9]){re.escape(code)}(?![A-ZА-Я0-9])"
+        if re.search(pattern, normalized_name):
+            return code
+    return None
 
 
 def _trace(
@@ -51,6 +69,25 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     rules = config["signal"]
     traces: list[RuleTrace] = []
 
+    excluded_code = _matched_excluded_tournament_code(
+        match.tournament_name,
+        list(rules.get("excluded_tournament_codes", [])),
+    )
+    if excluded_code is not None:
+        traces.append(
+            _trace(
+                code="TOURNAMENT_EXCLUDED",
+                label="Исключенный турнир",
+                passed=False,
+                actual=match.tournament_name,
+                expected=f"не {excluded_code}",
+            )
+        )
+        return SignalDecision(
+            suitable=False,
+            reason=f"Турнир {excluded_code} исключен из сигналов",
+            traces=traces,
+        )
     # ---------------------------------------------------------
     # Проверка минимального количества матчей H2H.
     #
