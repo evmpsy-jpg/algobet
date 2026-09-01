@@ -341,6 +341,11 @@ def signal_stats_eligible(match_or_raw_data: Match | dict[str, Any] | None, *, m
         raw_data = match_or_raw_data.raw_data if isinstance(match_or_raw_data.raw_data, dict) else None
         if raw_data is None:
             return False
+        cp_value = signal_stats_cp_value(raw_data)
+        if cp_value is None or cp_value < min_cp:
+            return False
+        if decision_suitable is True:
+            return True
         columns = get_excel_mapping()
         rule_keys = (
             columns["form_p1"],
@@ -361,12 +366,11 @@ def signal_stats_eligible(match_or_raw_data: Match | dict[str, Any] | None, *, m
                 return False
             if not evaluate_match(match_data).suitable:
                 return False
-    else:
-        raw_data = match_or_raw_data if isinstance(match_or_raw_data, dict) else None
+        return True
 
+    raw_data = match_or_raw_data if isinstance(match_or_raw_data, dict) else None
     cp_value = signal_stats_cp_value(raw_data)
     return cp_value is not None and cp_value >= min_cp
-
 
 def summarize_results(rows: list[tuple[dict[str, Any] | None, str | None]], total_sent: int = 0) -> ResultSummary:
     summary = ResultSummary(total_sent=total_sent)

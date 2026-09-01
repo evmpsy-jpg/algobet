@@ -105,3 +105,36 @@ def test_format_public_results_handles_empty_history() -> None:
 
     assert "пока нет оцененных сигналов" in text
     assert "Процент захода: —" in text
+
+def test_format_public_results_keeps_historically_suitable_a15_result() -> None:
+    signal = ScheduledSignal(
+        id=13,
+        match_id=3,
+        status="sent",
+        send_at=datetime(2026, 8, 31, 13, 20),
+        sent_at=datetime(2026, 8, 31, 13, 20),
+        signal_payload={"level": "STANDARD", "side": 2, "signal_group": "all"},
+        message_text="historical A15 signal",
+    )
+    match = make_match()
+    match.match_start_at = datetime(2026, 8, 31, 13, 30)
+    match.match_time = "16:30"
+    match.player_1 = "Девятников Д. Н."
+    match.player_2 = "Король Д. И."
+    match.score = "0:3"
+    match.raw_data = {
+        "_tournament_name": "Турнир A15. Лига 600-700",
+        "CP": 42,
+        "Q": 7,
+        "X": 7,
+        "CV": 20,
+        "CW": 80,
+        "DG": 8,
+    }
+    result = SignalResult(signal_id=13, status="lost", source="auto")
+
+    text = format_public_results([(signal, match, result, True)], total_sent=1)
+
+    assert "Оценено: 1 из 1" in text
+    assert "❌ Не зашло: 1" in text
+    assert "Девятников Д. Н. — Король Д. И." in text
