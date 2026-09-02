@@ -164,7 +164,7 @@ def format_public_results(
         else:
             signal, match, result = row
             decision_suitable = None
-        if signal_stats_eligible(match, decision_suitable=decision_suitable):
+        if signal.status == "sent" and signal_stats_eligible(match, decision_suitable=decision_suitable):
             visible_rows.append((signal, match, result))
     summary = summarize_results(
         [(signal.signal_payload, result.status) for signal, _, result in visible_rows],
@@ -640,6 +640,7 @@ async def public_results_handler(message: Message) -> None:
                 (SignalDecisionLog.match_id == ScheduledSignal.match_id)
                 & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
             )
+            .where(ScheduledSignal.status == "sent")
             .where(SignalResult.status.in_(["won", "lost", "void"]))
             .order_by(desc(Match.match_start_at), desc(ScheduledSignal.sent_at), desc(SignalResult.fixed_at), desc(ScheduledSignal.id))
         )).all())

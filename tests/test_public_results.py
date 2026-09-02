@@ -138,3 +138,23 @@ def test_format_public_results_keeps_historically_suitable_a15_result() -> None:
     assert "Оценено: 1 из 1" in text
     assert "❌ Не зашло: 1" in text
     assert "Девятников Д. Н. — Король Д. И." in text
+
+def test_format_public_results_excludes_cancelled_signals() -> None:
+    cancelled_signal = ScheduledSignal(
+        id=14,
+        match_id=4,
+        status="cancelled",
+        send_at=datetime(2026, 8, 31, 13, 20),
+        sent_at=datetime(2026, 8, 31, 13, 20),
+        signal_payload={"level": "STANDARD", "side": 2, "signal_group": "all"},
+        message_text="cancelled signal",
+    )
+    match = make_match()
+    match.raw_data = {"CP": 42}
+    result = SignalResult(signal_id=14, status="lost", source="auto")
+
+    text = format_public_results([(cancelled_signal, match, result, True)], total_sent=1)
+
+    assert "Оценено: 0 из 0" in text
+    assert "❌ Не зашло: 0" in text
+    assert "cancelled signal" not in text
