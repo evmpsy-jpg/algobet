@@ -168,7 +168,7 @@ def format_public_results(
             visible_rows.append((signal, match, result))
     summary = summarize_results(
         [(signal.signal_payload, result.status) for signal, _, result in visible_rows],
-        total_sent=min(total_sent, len(visible_rows)),
+        total_sent=total_sent,
     )
     correction = {
         "won": max(int(get_settings().stats_correction_won), 0),
@@ -631,6 +631,21 @@ async def help_information_handler(message: Message) -> None:
 @router.message(F.text == "🏆 Результаты")
 async def public_results_handler(message: Message) -> None:
     async with SessionFactory() as session:
+        sent_rows = list((await session.execute(
+            select(ScheduledSignal, Match, SignalDecisionLog.suitable)
+            .join(Match, Match.id == ScheduledSignal.match_id)
+            .outerjoin(
+                SignalDecisionLog,
+                (SignalDecisionLog.match_id == ScheduledSignal.match_id)
+                & (SignalDecisionLog.import_batch_id == ScheduledSignal.source_import_id),
+            )
+            .where(ScheduledSignal.status == "sent")
+        )).all())
+        eligible_sent_total = sum(
+            1
+            for signal, match, decision_suitable in sent_rows
+            if signal_stats_eligible(match, decision_suitable=decision_suitable)
+        )
         rows = list((await session.execute(
             select(ScheduledSignal, Match, SignalResult, SignalDecisionLog.suitable)
             .join(Match, Match.id == ScheduledSignal.match_id)
@@ -644,7 +659,7 @@ async def public_results_handler(message: Message) -> None:
             .where(SignalResult.status.in_(["won", "lost", "void"]))
             .order_by(desc(Match.match_start_at), desc(ScheduledSignal.sent_at), desc(SignalResult.fixed_at), desc(ScheduledSignal.id))
         )).all())
-    await message.answer(format_public_results(rows, len(rows)))
+    await message.answer(format_public_results(rows, eligible_sent_total))
 
 def calculator_result_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[

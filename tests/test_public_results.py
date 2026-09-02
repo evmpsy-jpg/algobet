@@ -49,7 +49,7 @@ def test_format_public_results_shows_recent_results_without_admin_source() -> No
 
     text = format_public_results(
         [(hidden_signal, hidden_match, hidden_result), (visible_signal, visible_match, visible_result)],
-        total_sent=2,
+        total_sent=1,
     )
 
     assert "🏆 Результаты сигналов" in text
@@ -153,8 +153,26 @@ def test_format_public_results_excludes_cancelled_signals() -> None:
     match.raw_data = {"CP": 42}
     result = SignalResult(signal_id=14, status="lost", source="auto")
 
-    text = format_public_results([(cancelled_signal, match, result, True)], total_sent=1)
+    text = format_public_results([(cancelled_signal, match, result, True)], total_sent=0)
 
     assert "Оценено: 0 из 0" in text
     assert "❌ Не зашло: 0" in text
     assert "cancelled signal" not in text
+
+def test_format_public_results_shows_sent_total_with_unrated_signal() -> None:
+    signal = ScheduledSignal(
+        id=15,
+        match_id=5,
+        status="sent",
+        send_at=datetime(2026, 9, 2, 9, 50),
+        sent_at=datetime(2026, 9, 2, 9, 50),
+        signal_payload={"level": "STANDARD", "side": 1, "signal_group": "all"},
+        message_text="sent result",
+    )
+    match = make_match()
+    result = SignalResult(signal_id=15, status="won", source="auto")
+
+    text = format_public_results([(signal, match, result, True)], total_sent=2)
+
+    assert "Оценено: 1 из 2" in text
+    assert "✅ Зашло: 1" in text
