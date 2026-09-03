@@ -389,6 +389,33 @@ def evaluate_match(match: MatchData) -> SignalDecision:
         else match.probability_p2
     )
 
+    comparison_available = match.comparison_ag is not None and match.comparison_as is not None
+    comparison_ok = (
+        comparison_available
+        and (
+            (side == 1 and match.comparison_ag > match.comparison_as)
+            or (side == 2 and match.comparison_as > match.comparison_ag)
+        )
+    )
+    traces.append(
+        _trace(
+            code="AG_AS_FAVORITE_CONFIRMATION",
+            label="Подтверждение фаворита AG/AS",
+            passed=comparison_ok,
+            actual=f"AG={match.comparison_ag}; AS={match.comparison_as}",
+            expected="для П1: AG > AS; для П2: AS > AG",
+            side=side,
+        )
+    )
+    if not comparison_ok:
+        return SignalDecision(
+            suitable=False,
+            reason=(
+                "Условие AG/AS не подтверждает выбранного фаворита: "
+                f"П{side}, AG={match.comparison_ag}, AS={match.comparison_as}"
+            ),
+            traces=traces,
+        )
 
     favorite_form = (
         match.favorite_form_p1
@@ -504,6 +531,8 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             match.average_h2h_handicap
         ),
         "average_difference": match.average_difference,
+        "comparison_ag": match.comparison_ag,
+        "comparison_as": match.comparison_as,
         "h2h_games": match.h2h_games,
         "recent_h2h_wins": recent_h2h,
         "recent_h2h_total": 5,

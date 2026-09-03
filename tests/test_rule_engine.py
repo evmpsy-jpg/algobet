@@ -52,6 +52,8 @@ def make_match(**overrides: object) -> MatchData:
         "h2h_p2": 2,
         "average_h2h_handicap": 2.4,
         "average_difference": 4.8,
+        "comparison_ag": 10,
+        "comparison_as": 1,
         "set1_handicap": -1.5,
         "set2_handicap": -2.0,
         "set3_handicap": -1.0,
@@ -89,6 +91,8 @@ def test_selects_p2_when_only_p2_qualifies() -> None:
             p2_exact=0,
             p2_range=0,
             probability_p2=91,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -108,6 +112,8 @@ def test_selects_side_with_higher_probability_when_both_qualify() -> None:
             p2_exact=0,
             probability_p1=86,
             probability_p2=92,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -189,6 +195,8 @@ def test_p2_range_values_qualify(range_value: int) -> None:
             p1_range=0,
             p2_exact=5,
             p2_range=range_value,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -224,6 +232,8 @@ def test_all_signal_p2_values_qualify(all_value: int) -> None:
             p2_exact=0,
             p2_range=0,
             probability_p2=91,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -256,6 +266,8 @@ def test_all_signal_p2_accepts_exact_five() -> None:
             p2_exact=5,
             p2_range=0,
             probability_p2=91,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -274,6 +286,8 @@ def test_negative_dh_no_longer_qualifies_all_signal_p2() -> None:
             p2_exact=0,
             p2_range=0,
             probability_p2=91,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -295,10 +309,10 @@ def test_vip_p1_accepts_exact_or_range() -> None:
 
 def test_vip_p2_accepts_exact_or_range() -> None:
     exact_only = evaluate_match(
-        make_match(all_signal_p1=None, all_signal_p2=None, p2_exact=6, p2_range=0, probability_p2=91)
+        make_match(all_signal_p1=None, all_signal_p2=None, p2_exact=6, p2_range=0, probability_p2=91, comparison_ag=1, comparison_as=10)
     )
     range_only = evaluate_match(
-        make_match(all_signal_p1=None, all_signal_p2=None, p2_exact=0, p2_range=8, probability_p2=91)
+        make_match(all_signal_p1=None, all_signal_p2=None, p2_exact=0, p2_range=8, probability_p2=91, comparison_ag=1, comparison_as=10)
     )
     both = evaluate_match(
         make_match(
@@ -307,6 +321,8 @@ def test_vip_p2_accepts_exact_or_range() -> None:
             p2_exact=5,
             p2_range=8,
             probability_p2=91,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -399,6 +415,8 @@ def test_bg_and_bf_do_not_block_old_signal_logic() -> None:
             p2_range=0,
             bf_p2=0,
             probability_p2=91,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -455,6 +473,8 @@ def test_selects_p2_when_p1_probability_is_missing() -> None:
             p2_exact=0,
             probability_p1=None,
             probability_p2=91,
+            comparison_ag=1,
+            comparison_as=10,
         )
     )
 
@@ -602,6 +622,8 @@ def test_standard_extension_accepts_p2_with_negative_ef_threshold() -> None:
             form_p2=5,
             probability_p1=20,
             probability_p2=65,
+            comparison_ag=1,
+            comparison_as=10,
             average_difference=-2.2,
         )
     )
@@ -636,3 +658,35 @@ def test_excludes_tournament_cyrillic_a15_from_signals() -> None:
 
     assert decision.suitable is False
     assert "A15" in str(decision.reason)
+
+def test_rejects_p1_when_ag_is_not_greater_than_as() -> None:
+    decision = evaluate_match(make_match(comparison_ag=4, comparison_as=4))
+
+    assert decision.suitable is False
+    assert "AG/AS" in str(decision.reason)
+
+
+def test_rejects_p2_when_as_is_not_greater_than_ag() -> None:
+    decision = evaluate_match(
+        make_match(
+            all_signal_p1=None,
+            all_signal_p2=8,
+            p1_exact=0,
+            p1_range=0,
+            p2_exact=0,
+            p2_range=0,
+            probability_p2=91,
+            comparison_ag=10,
+            comparison_as=1,
+        )
+    )
+
+    assert decision.suitable is False
+    assert "AG/AS" in str(decision.reason)
+
+
+def test_rejects_when_ag_or_as_is_missing() -> None:
+    decision = evaluate_match(make_match(comparison_ag=None, comparison_as=1))
+
+    assert decision.suitable is False
+    assert "AG/AS" in str(decision.reason)

@@ -50,6 +50,8 @@ async def test_import_parse_result_does_not_schedule_past_due_signal(monkeypatch
             "EH": 0,
             "CS": 0,
             "CT": 0,
+            "AG": 10,
+            "AS": 1,
         },
     )
     result = ParseResult(sheet_name="Лист", total_rows=1, matches=[parsed], warnings=[])
@@ -105,6 +107,8 @@ async def test_import_parse_result_can_store_past_due_signal_for_history(monkeyp
             "EH": 0,
             "CS": 0,
             "CT": 0,
+            "AG": 10,
+            "AS": 1,
         },
     )
     result = ParseResult(sheet_name="Лист", total_rows=1, matches=[parsed], warnings=[])
@@ -166,6 +170,8 @@ async def test_import_parse_result_deduplicates_same_external_match_id(monkeypat
             "EH": 0,
             "CS": 0,
             "CT": 0,
+            "AG": 10,
+            "AS": 1,
         },
     )
     second = ParsedMatch(
@@ -193,6 +199,8 @@ async def test_import_parse_result_deduplicates_same_external_match_id(monkeypat
             "EH": 0,
             "CS": 0,
             "CT": 0,
+            "AG": 10,
+            "AS": 1,
         },
     )
     result = ParseResult(sheet_name="Лист", total_rows=2, matches=[first, second], warnings=[])

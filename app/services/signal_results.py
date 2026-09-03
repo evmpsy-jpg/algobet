@@ -313,6 +313,8 @@ def _match_data_for_stats(match: Match) -> MatchData | None:
         h2h_p2=get("h2h_p2"),
         average_h2h_handicap=get("average_h2h_handicap"),
         average_difference=get("average_difference"),
+        comparison_ag=get("comparison_ag"),
+        comparison_as=get("comparison_as"),
         set1_handicap=get("set1_handicap"),
         set2_handicap=get("set2_handicap"),
         set3_handicap=get("set3_handicap"),

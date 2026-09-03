@@ -29,6 +29,8 @@ DEFAULT_MAPPING: dict[str, str] = {
     "h2h_p2": "AB",
     "average_h2h_handicap": "AI",
     "average_difference": "EF",
+    "comparison_ag": "AG",
+    "comparison_as": "AS",
     "set1_handicap": "DS",
     "set2_handicap": "DV",
     "set3_handicap": "DY",

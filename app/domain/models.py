@@ -41,6 +41,8 @@ class MatchData:
     h2h_p2: float | None = None
     average_h2h_handicap: float | None = None
     average_difference: float | None = None
+    comparison_ag: float | None = None
+    comparison_as: float | None = None
     set1_handicap: float | None = None
     set2_handicap: float | None = None
     set3_handicap: float | None = None
