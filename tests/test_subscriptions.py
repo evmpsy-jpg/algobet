@@ -37,6 +37,7 @@ def make_user() -> User:
 def test_subscription_plans_include_new_pricing() -> None:
     vip = get_subscription_plan("vip_100")
     included = get_subscription_plan("included_30d")
+    annual = get_subscription_plan("included_12m")
 
     assert vip is not None
     assert vip.title == "VIP 99%"
@@ -48,6 +49,9 @@ def test_subscription_plans_include_new_pricing() -> None:
     assert included.includes_analytics is True
     assert included.duration_days == 30
     assert included.price_rub == 25000
+    assert annual is not None
+    assert annual.duration_days == 365
+    assert annual.price_rub == 100000
 
 
 def test_format_subscription_plans_text_lists_all_groups() -> None:
@@ -57,6 +61,9 @@ def test_format_subscription_plans_text_lists_all_groups() -> None:
     assert "Все сигналы 95%" in text
     assert "Всё включено" in text
     assert "25 000р" in text
+    assert "17 500р" in text
+    assert "годовой абонемент" in text
+    assert "< 30р за сигнал" in text
 
 
 @pytest.mark.asyncio
@@ -78,7 +85,7 @@ async def test_create_subscription_request_persists_selected_plan() -> None:
         assert saved.status == "new"
         assert saved.plan_title == "Все сигналы 95%"
         assert saved.signals_limit == 50
-        assert saved.price_rub == 7000
+        assert saved.price_rub == 6250
         assert saved.payment_details == "Подписка карта"
         assert saved.specialist_contact == "@subspec"
     await engine.dispose()
