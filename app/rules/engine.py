@@ -91,15 +91,14 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     # ---------------------------------------------------------
     # Проверка минимального количества матчей H2H.
     #
-    # Пока сохраняем текущее правило:
-    # CP >= min_h2h_games — матч допускается.
-    # Глобальный STOP для CP будет отдельным изменением.
+    # Текущее правило:
+    # CP > min_h2h_games — матч допускается.
     # ---------------------------------------------------------
     min_h2h = float(rules["min_h2h_games"])
 
     cp_ok = (
         match.h2h_games is not None
-        and match.h2h_games >= min_h2h
+        and match.h2h_games > min_h2h
     )
 
     traces.append(
@@ -108,7 +107,7 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             label="Количество H2H",
             passed=cp_ok,
             actual=match.h2h_games,
-            expected=f">= {min_h2h:g}",
+            expected=f"> {min_h2h:g}",
         )
     )
 
@@ -116,33 +115,39 @@ def evaluate_match(match: MatchData) -> SignalDecision:
     # Первичные условия кандидатов.
     #
     # Обычные сигналы:
-    # P1: DG входит в {8, 9, 10} или EG >= 5 или EL >= 6
-    # P2: DH входит в {8, 9, 10} или EH >= 5 или EL <= -6
+    # P1: D >= 8 или DG входит в {8, 9, 10} или EG >= 5 или EL >= 6
+    # P2: D <= -8 или DH входит в {8, 9, 10} или EH >= 5 или EL <= -6
     #
     # VIP сигналы:
-    # P1: EG == 6 или CS in {8, 9, 10} или EL >= 7
-    # P2: EH == 6 или CT in {8, 9, 10} или EL <= -7
+    # P1: D >= 9 или EG == 6 или CS in {8, 9, 10} или EL >= 7
+    # P2: D <= -9 или EH == 6 или CT in {8, 9, 10} или EL <= -7
     # ---------------------------------------------------------
     all_allowed = {8.0, 9.0, 10.0}
     vip_range_allowed = {8.0, 9.0, 10.0}
+    standard_advantage_min = float(rules.get("standard_advantage_min", 8))
+    vip_advantage_min = float(rules.get("vip_advantage_min", 9))
 
     p1_all = (
-        match.all_signal_p1 in all_allowed
+        (match.advantage is not None and match.advantage >= standard_advantage_min)
+        or match.all_signal_p1 in all_allowed
         or (match.p1_exact is not None and match.p1_exact >= 5)
         or (match.signal_balance is not None and match.signal_balance >= 6)
     )
     p2_all = (
-        match.all_signal_p2 in all_allowed
+        (match.advantage is not None and match.advantage <= -standard_advantage_min)
+        or match.all_signal_p2 in all_allowed
         or (match.p2_exact is not None and match.p2_exact >= 5)
         or (match.signal_balance is not None and match.signal_balance <= -6)
     )
     p1_vip = (
-        match.p1_exact == 6
+        (match.advantage is not None and match.advantage >= vip_advantage_min)
+        or match.p1_exact == 6
         or match.p1_range in vip_range_allowed
         or (match.signal_balance is not None and match.signal_balance >= 7)
     )
     p2_vip = (
-        match.p2_exact == 6
+        (match.advantage is not None and match.advantage <= -vip_advantage_min)
+        or match.p2_exact == 6
         or match.p2_range in vip_range_allowed
         or (match.signal_balance is not None and match.signal_balance <= -7)
     )
@@ -156,12 +161,13 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             label="Первичное условие P1",
             passed=p1_base,
             actual=(
+                f"D={match.advantage}; "
                 f"DG={match.all_signal_p1}; "
                 f"EG={match.p1_exact}; "
                 f"CS={match.p1_range}; "
                 f"EL={match.signal_balance}"
             ),
-            expected="ALL: DG in {8,9,10} or EG>=5 or EL>=6; VIP: EG=6 or CS in {8,9,10} or EL>=7",
+            expected="ALL: D>=8 or DG in {8,9,10} or EG>=5 or EL>=6; VIP: D>=9 or EG=6 or CS in {8,9,10} or EL>=7",
             side=1,
         )
     )
@@ -172,12 +178,13 @@ def evaluate_match(match: MatchData) -> SignalDecision:
             label="Первичное условие P2",
             passed=p2_base,
             actual=(
+                f"D={match.advantage}; "
                 f"DH={match.all_signal_p2}; "
                 f"EH={match.p2_exact}; "
                 f"CT={match.p2_range}; "
                 f"EL={match.signal_balance}"
             ),
-            expected="ALL: DH in {8,9,10} or EH>=5 or EL<=-6; VIP: EH=6 or CT in {8,9,10} or EL<=-7",
+            expected="ALL: D<=-8 or DH in {8,9,10} or EH>=5 or EL<=-6; VIP: D<=-9 or EH=6 or CT in {8,9,10} or EL<=-7",
             side=2,
         )
     )

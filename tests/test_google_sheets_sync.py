@@ -9,6 +9,7 @@ from app.services.excel_parser import ParseResult
 from app.services.import_service import ImportSummary
 from app.services.google_sheets_sync import (
     GoogleSheetsSyncResult,
+    parse_google_sheet_with_retries,
     parse_result_hash,
     parse_schedule_minutes,
     seconds_until_next_schedule,
@@ -20,6 +21,38 @@ def test_parse_result_hash_is_stable() -> None:
     result = ParseResult(sheet_name="Лист", total_rows=1, matches=[], warnings=[])
 
     assert parse_result_hash(result) == parse_result_hash(result)
+
+
+@pytest.mark.asyncio
+async def test_parse_google_sheet_with_retries_recovers_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    parsed = ParseResult(sheet_name="Лист", total_rows=1, matches=[], warnings=[])
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    def flaky_parse(sheet_id: str, path: str, timezone: str, max_rows: int):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise TimeoutError("temporary timeout")
+        return parsed
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("app.services.google_sheets_sync.parse_google_sheet_with_service_account", flaky_parse)
+    monkeypatch.setattr("app.services.google_sheets_sync.asyncio.sleep", fake_sleep)
+
+    result = await parse_google_sheet_with_retries(
+        "sheet",
+        "service.json",
+        "Europe/Moscow",
+        500,
+        attempts=2,
+        delay_seconds=0.5,
+    )
+
+    assert result is parsed
+    assert attempts["count"] == 2
+    assert sleeps == [0.5]
 
 
 @pytest.mark.asyncio

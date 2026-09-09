@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
+import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +22,8 @@ logger = logging.getLogger(__name__)
 GOOGLE_SHEETS_LAST_SHA_KEY = "google_sheets.last_sha256"
 GOOGLE_SHEETS_UPLOADED_BY = 0
 GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
+GOOGLE_SHEETS_RETRY_ATTEMPTS = 3
+GOOGLE_SHEETS_RETRY_DELAY_SECONDS = 30
 SYNC_LOCK = asyncio.Lock()
 
 
@@ -59,6 +63,58 @@ def parse_google_sheet_with_service_account(sheet_id: str, service_account_file:
     return parse_google_sheet(sheet_id, token, timezone, max_rows=max_rows)
 
 
+def is_transient_google_sheets_error(exc: BaseException) -> bool:
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in {429, 500, 502, 503, 504}
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        return isinstance(reason, (TimeoutError, socket.timeout, ConnectionError))
+    if isinstance(exc, ConnectionError):
+        return True
+    return False
+
+
+async def parse_google_sheet_with_retries(
+    sheet_id: str,
+    service_account_file: str,
+    timezone: str,
+    max_rows: int,
+    *,
+    attempts: int = GOOGLE_SHEETS_RETRY_ATTEMPTS,
+    delay_seconds: float = GOOGLE_SHEETS_RETRY_DELAY_SECONDS,
+):
+    last_exc: BaseException | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    parse_google_sheet_with_service_account,
+                    sheet_id,
+                    service_account_file,
+                    timezone,
+                    max_rows,
+                ),
+                timeout=90,
+            )
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts or not is_transient_google_sheets_error(exc):
+                raise
+            logger.warning(
+                "Временная ошибка Google Sheets sync, попытка %s/%s: %s",
+                attempt,
+                attempts,
+                exc,
+            )
+            await asyncio.sleep(delay_seconds)
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Google Sheets sync retry loop finished without result.")
+
+
 def parse_result_hash(result) -> str:
     payload = {
         "sheet_name": result.sheet_name,
@@ -94,15 +150,11 @@ async def sync_google_sheet_once(bot: GoogleSyncBot | None = None) -> GoogleShee
 
     async with SYNC_LOCK:
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    parse_google_sheet_with_service_account,
-                    settings.google_sheet_id,
-                    service_account_file,
-                    settings.timezone,
-                    int(getattr(settings, "google_sheets_sync_max_rows", 1200)),
-                ),
-                timeout=90,
+            result = await parse_google_sheet_with_retries(
+                settings.google_sheet_id,
+                service_account_file,
+                settings.timezone,
+                int(getattr(settings, "google_sheets_sync_max_rows", 1200)),
             )
             file_hash = parse_result_hash(result)
             async with SessionFactory() as session:

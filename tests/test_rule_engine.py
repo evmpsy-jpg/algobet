@@ -35,7 +35,7 @@ def make_match(**overrides: object) -> MatchData:
         ),
         "player_1": "Игрок 1",
         "player_2": "Игрок 2",
-        "h2h_games": 5,
+        "h2h_games": 6,
         "form_p1": 7,
         "form_p2": 7,
         "bg_p1": 1.3,
@@ -458,7 +458,7 @@ def test_all_signal_requires_h2h_minimum() -> None:
 
 
 def test_all_signal_passes_with_enough_h2h() -> None:
-    decision = evaluate_match(make_match(h2h_games=5, all_signal_p1=8, p1_exact=0, p1_range=0))
+    decision = evaluate_match(make_match(h2h_games=6, all_signal_p1=8, p1_exact=0, p1_range=0))
 
     assert decision.suitable is True
     assert decision.payload["signal_group"] == "all"
@@ -516,7 +516,7 @@ def test_rejects_when_probabilities_are_missing() -> None:
     assert decision.side is None
     assert "\u041d\u0435\u0442 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u043e\u0441\u0442\u0438" in decision.reason
 
-def test_accepts_exactly_five_h2h_games() -> None:
+def test_rejects_exactly_five_h2h_games() -> None:
     decision = evaluate_match(
         make_match(
             h2h_games=5,
@@ -527,8 +527,8 @@ def test_accepts_exactly_five_h2h_games() -> None:
         )
     )
 
-    assert decision.suitable is True
-    assert decision.side == 1
+    assert decision.suitable is False
+    assert "Количество H2H" in str(decision.reason)
 
 def test_accepts_more_than_five_h2h_games() -> None:
     decision = evaluate_match(
@@ -556,6 +556,86 @@ def test_vip_signal_still_requires_h2h_minimum() -> None:
     )
 
     assert decision.suitable is False
+
+
+def test_standard_p1_accepts_advantage_eight() -> None:
+    decision = evaluate_match(
+        make_match(
+            advantage=8,
+            all_signal_p1=None,
+            all_signal_p2=None,
+            p1_exact=0,
+            p1_range=0,
+            p2_exact=0,
+            p2_range=0,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 1
+    assert decision.payload["signal_group"] == "all"
+
+
+def test_standard_p2_accepts_negative_advantage_eight() -> None:
+    decision = evaluate_match(
+        make_match(
+            advantage=-8,
+            all_signal_p1=None,
+            all_signal_p2=None,
+            p1_exact=0,
+            p1_range=0,
+            p2_exact=0,
+            p2_range=0,
+            probability_p1=20,
+            probability_p2=88,
+            comparison_ag=1,
+            comparison_as=10,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 2
+    assert decision.payload["signal_group"] == "all"
+
+
+def test_vip_p1_accepts_advantage_nine() -> None:
+    decision = evaluate_match(
+        make_match(
+            advantage=9,
+            all_signal_p1=None,
+            all_signal_p2=None,
+            p1_exact=0,
+            p1_range=0,
+            p2_exact=0,
+            p2_range=0,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 1
+    assert decision.payload["signal_group"] == "vip"
+
+
+def test_vip_p2_accepts_negative_advantage_nine() -> None:
+    decision = evaluate_match(
+        make_match(
+            advantage=-9,
+            all_signal_p1=None,
+            all_signal_p2=None,
+            p1_exact=0,
+            p1_range=0,
+            p2_exact=0,
+            p2_range=0,
+            probability_p1=20,
+            probability_p2=88,
+            comparison_ag=1,
+            comparison_as=10,
+        )
+    )
+
+    assert decision.suitable is True
+    assert decision.side == 2
+    assert decision.payload["signal_group"] == "vip"
 
 
 def test_all_signal_requires_standard_or_extended_form() -> None:

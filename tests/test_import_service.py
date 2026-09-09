@@ -39,7 +39,7 @@ async def test_import_parse_result_does_not_schedule_past_due_signal(monkeypatch
         player_2_rating=None,
         score=None,
         raw_data={
-            "CP": 5,
+            "CP": 6,
             "Q": 7,
             "X": 7,
             "CV": 90,
@@ -96,7 +96,7 @@ async def test_import_parse_result_can_store_past_due_signal_for_history(monkeyp
         player_2_rating=None,
         score="1:3",
         raw_data={
-            "CP": 5,
+            "CP": 6,
             "Q": 7,
             "X": 7,
             "CV": 90,
@@ -159,7 +159,7 @@ async def test_import_parse_result_deduplicates_same_external_match_id(monkeypat
         player_2_rating=None,
         score=None,
         raw_data={
-            "CP": 5,
+            "CP": 6,
             "Q": 7,
             "X": 7,
             "CV": 90,
@@ -188,7 +188,7 @@ async def test_import_parse_result_deduplicates_same_external_match_id(monkeypat
         player_2_rating=None,
         score="3:1",
         raw_data={
-            "CP": 5,
+            "CP": 6,
             "Q": 7,
             "X": 7,
             "CV": 90,
