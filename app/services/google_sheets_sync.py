@@ -64,15 +64,29 @@ def parse_google_sheet_with_service_account(sheet_id: str, service_account_file:
 
 
 def is_transient_google_sheets_error(exc: BaseException) -> bool:
-    if isinstance(exc, (TimeoutError, socket.timeout)):
-        return True
-    if isinstance(exc, urllib.error.HTTPError):
-        return exc.code in {429, 500, 502, 503, 504}
-    if isinstance(exc, urllib.error.URLError):
-        reason = exc.reason
-        return isinstance(reason, (TimeoutError, socket.timeout, ConnectionError))
-    if isinstance(exc, ConnectionError):
-        return True
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, socket.timeout, ConnectionError)):
+            return True
+        if isinstance(current, urllib.error.HTTPError):
+            return current.code in {429, 500, 502, 503, 504}
+        if isinstance(current, urllib.error.URLError):
+            reason = current.reason
+            return isinstance(reason, (TimeoutError, socket.timeout, ConnectionError))
+
+        module = current.__class__.__module__
+        name = current.__class__.__name__
+        message = str(current).lower()
+        if module.startswith("google.auth") and name == "TransportError":
+            return True
+        if name in {"ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout"}:
+            return True
+        if "temporary failure in name resolution" in message or "failed to resolve" in message:
+            return True
+
+        current = current.__cause__ or current.__context__
     return False
 
 
