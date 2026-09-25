@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fastapi import HTTPException
 from fastapi.security import HTTPBasicCredentials
 
-from app.database.models import Base, Match, MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess, WebAdminActionLog, WebAdminUser
+from app.database.models import Base, BroadcastDelivery, BroadcastMessage, Match, MatchAnalysisRequest, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess, WebAdminActionLog, WebAdminUser
 from app.services.dashboard import (
     DashboardSummary,
     MaintenanceSummary,
@@ -40,6 +40,7 @@ from app.web_admin import (
     WebAdminActivityItem,
     authenticate_web_admin,
     _csv_response,
+    collect_broadcast_recipients,
     collect_web_admin_activity,
     create_or_update_web_admin_user,
     deactivate_web_admin_user,
@@ -49,6 +50,7 @@ from app.web_admin import (
     render_audit_csv,
     render_audit_html,
     render_admin_guide_html,
+    render_broadcasts_html,
     render_markdown_document,
     render_dashboard_html,
     render_import_detail_html,
@@ -369,6 +371,76 @@ def test_render_users_html_shows_access_and_delivery_counts() -> None:
     assert "3 / 1" in html
     assert "/users/1" in html
 
+def test_render_broadcasts_html_shows_form_and_recent_rows() -> None:
+    broadcast = BroadcastMessage(
+        id=7,
+        title="Новость",
+        text="Текст рассылки",
+        audience="active",
+        parse_mode=None,
+        status="completed",
+        total_recipients=10,
+        sent_count=9,
+        failed_count=1,
+        created_by="admin",
+        created_at=datetime(2026, 7, 24, 11, 0),
+    )
+    delivery = BroadcastDelivery(
+        id=3,
+        broadcast_id=7,
+        user_id=1,
+        telegram_id=315715137,
+        status="sent",
+        sent_at=datetime(2026, 7, 24, 11, 1),
+    )
+    user = User(id=1, telegram_id=315715137, username="admin", first_name="Admin", last_name="User")
+
+    html = render_broadcasts_html([broadcast], [(delivery, user)], message="готово")
+
+    assert "Новая рассылка" in html
+    assert 'action="/broadcasts"' in html
+    assert "Все активные пользователи" in html
+    assert "HTML-разметка Telegram" in html
+    assert "Новость" in html
+    assert "9 / 1" in html
+    assert "@admin" in html
+    assert "готово" in html
+
+
+@pytest.mark.asyncio
+async def test_collect_broadcast_recipients_filters_audience() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with Session() as session:
+        paid = User(telegram_id=1001, username="paid", first_name=None, last_name=None, is_active=True)
+        trial = User(telegram_id=1002, username="trial", first_name=None, last_name=None, is_active=True)
+        inactive = User(telegram_id=1003, username="inactive", first_name=None, last_name=None, is_active=False)
+        no_access = User(telegram_id=1004, username="none", first_name=None, last_name=None, is_active=True)
+        session.add_all([paid, trial, inactive, no_access])
+        await session.flush()
+        session.add_all([
+            UserAccess(user_id=paid.id, access_type="paid", status="active", free_signals_remaining=0),
+            UserAccess(user_id=trial.id, access_type="trial", status="active"),
+            UserAccess(user_id=inactive.id, access_type="paid", status="active", free_signals_remaining=0),
+        ])
+        await session.commit()
+
+        active_users = await collect_broadcast_recipients(session, "active", [])
+        paid_users = await collect_broadcast_recipients(session, "paid", [])
+        trial_users = await collect_broadcast_recipients(session, "trial", [])
+        no_access_users = await collect_broadcast_recipients(session, "no_access", [])
+        admin_users = await collect_broadcast_recipients(session, "admins", [1002])
+
+    await engine.dispose()
+
+    assert [user.telegram_id for user in active_users] == [1001, 1002, 1004]
+    assert [user.telegram_id for user in paid_users] == [1001]
+    assert [user.telegram_id for user in trial_users] == [1002]
+    assert [user.telegram_id for user in no_access_users] == [1004]
+    assert [user.telegram_id for user in admin_users] == [1002]
 
 def test_render_subscriptions_html_shows_filters_and_user_rows() -> None:
     html = render_subscriptions_html(

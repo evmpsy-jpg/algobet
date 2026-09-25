@@ -220,6 +220,36 @@ class SignalDelivery(Base):
     signal: Mapped[ScheduledSignal] = relationship(back_populates="deliveries")
     user: Mapped[User] = relationship(back_populates="deliveries")
 
+class BroadcastMessage(Base):
+    __tablename__ = "broadcast_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str | None] = mapped_column(String(255))
+    text: Mapped[str] = mapped_column(Text)
+    audience: Mapped[str] = mapped_column(String(50), default="active", index=True)
+    parse_mode: Mapped[str | None] = mapped_column(String(20))
+    disable_web_page_preview: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(30), default="completed", index=True)
+    total_recipients: Mapped[int] = mapped_column(Integer, default=0)
+    sent_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str | None] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class BroadcastDelivery(Base):
+    __tablename__ = "broadcast_deliveries"
+    __table_args__ = (UniqueConstraint("broadcast_id", "user_id", name="uq_broadcast_delivery_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    broadcast_id: Mapped[int] = mapped_column(ForeignKey("broadcast_messages.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    error_text: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 class SignalResult(Base):
     __tablename__ = "signal_results"

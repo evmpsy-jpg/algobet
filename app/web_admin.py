@@ -23,7 +23,7 @@ from aiogram import Bot
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import desc, or_, select
 
-from app.database.models import MatchAnalysisRequest, PlayerBirthday, ScheduledSignal, SignalResult, SubscriptionRequest, User, WebAdminActionLog, WebAdminUser
+from app.database.models import BroadcastDelivery, BroadcastMessage, MatchAnalysisRequest, PlayerBirthday, ScheduledSignal, SignalResult, SubscriptionRequest, User, UserAccess, WebAdminActionLog, WebAdminUser
 from app.database.session import SessionFactory, init_db
 from app.services.access import disable_access, grant_subscription_access, grant_subscription_plan_access, grant_trial_access
 from app.services.signal_sender import process_delivery_now
@@ -235,6 +235,8 @@ LABELS = {
     "web_admin_deactivate": "Отключение web-админа",
     "player_birthdays_sync": "Синхронизация игроков",
     "player_birthdays_import": "Импорт игроков",
+    "broadcast_send": "Отправка рассылки",
+    "broadcast": "Рассылка",
     "web_admin_role_update": "Изменение роли web-админа",
     "web_admin": "Web-админ",
     "signal": "Сигнал",
@@ -302,6 +304,20 @@ def _subscriptions_path(access_type_filter: str | None = None, access_status_fil
         params.append(f"status={access_status_filter}")
     return base + ("?" + "&".join(params) if params else "")
 
+
+
+BROADCAST_AUDIENCE_LABELS = {
+    "active": "Все активные пользователи",
+    "paid": "Пользователи с платным доступом",
+    "trial": "Пользователи с пробным доступом",
+    "no_access": "Активные без доступа",
+    "admins": "Админы бота",
+}
+
+BROADCAST_PARSE_MODE_LABELS = {
+    "plain": "Обычный текст",
+    "HTML": "HTML-разметка Telegram",
+}
 
 SIGNAL_RESULT_WEB_STATUSES = ("won", "lost", "void", "unknown")
 
@@ -694,6 +710,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
             ("Статистика", "/quality"),
             ("Мониторинг", "/monitoring"),
             ("Пользователи", "/users"),
+            ("Рассылки", "/broadcasts"),
             ("Игроки", "/players"),
             ("Подписки", "/subscriptions"),
             ("Заявки", "/requests"),
@@ -757,7 +774,7 @@ def _base_html(title: str, body: str, *, token: str = "") -> str:
     .filters {{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }}
     .settings-form {{ display:grid; gap:8px; max-width:760px; }}
     .settings-form label {{ color:var(--muted); font-weight:700; font-size:13px; }}
-    .settings-form textarea, .settings-form input {{ width:100%; border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; color:var(--text); background:#fff; }}
+    .settings-form textarea, .settings-form input, .settings-form select {{ width:100%; border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; color:var(--text); background:#fff; }}
     .doc-page {{ display:block; max-width:920px; }}
     .doc-page h1 {{ margin:0 0 16px; font-size:26px; }}
     .doc-page h2 {{ margin:28px 0 12px; padding-top:16px; border-top:1px solid var(--line); font-size:18px; }}
@@ -1121,6 +1138,175 @@ def render_users_html(users: list[UserListItem], *, token: str = "", search: str
     return _base_html("Пользователи", body, token=token)
 
 
+
+def render_broadcasts_html(
+    broadcasts: list[BroadcastMessage],
+    deliveries: list[tuple[BroadcastDelivery, User | None]],
+    *,
+    token: str = "",
+    message: str = "",
+) -> str:
+    message_html = f'<p class="pill"><b>{escape(message)}</b></p>' if message else ""
+    audience_options = "".join(
+        f'<option value="{escape(value)}">{escape(label)}</option>'
+        for value, label in BROADCAST_AUDIENCE_LABELS.items()
+    )
+    parse_mode_options = "".join(
+        f'<option value="{escape(value)}">{escape(label)}</option>'
+        for value, label in BROADCAST_PARSE_MODE_LABELS.items()
+    )
+    broadcast_rows = "".join(
+        f"""
+        <tr>
+          <td>#{broadcast.id}</td>
+          <td>{escape(broadcast.title or '-')}<div class="muted">{escape((broadcast.text or '').replace(chr(10), ' ')[:160])}</div></td>
+          <td>{escape(BROADCAST_AUDIENCE_LABELS.get(broadcast.audience, broadcast.audience))}</td>
+          <td>{escape(_label(broadcast.status))}</td>
+          <td>{broadcast.total_recipients}</td>
+          <td>{broadcast.sent_count} / {broadcast.failed_count}</td>
+          <td>{escape(broadcast.created_by or '-')}</td>
+          <td>{_fmt_dt(broadcast.created_at)}</td>
+        </tr>
+        """
+        for broadcast in broadcasts
+    ) or '<tr><td colspan="8" class="muted">Рассылок пока нет.</td></tr>'
+    delivery_rows = "".join(
+        f"""
+        <tr>
+          <td>#{delivery.broadcast_id}</td>
+          <td>{delivery.telegram_id}</td>
+          <td>{_user_name(user) if user else '-'}</td>
+          <td>{escape(_label(delivery.status))}</td>
+          <td>{_fmt_dt(delivery.sent_at or delivery.created_at)}</td>
+          <td class="optional">{escape(delivery.error_text or '-')}</td>
+        </tr>
+        """
+        for delivery, user in deliveries
+    ) or '<tr><td colspan="6" class="muted">Доставок пока нет.</td></tr>'
+    body = f"""
+    <section><h2>Новая рассылка</h2>
+      {message_html}
+      <form class="settings-form" method="post" action="/broadcasts">
+        <label>Заголовок для внутреннего списка</label>
+        <input name="title" maxlength="255" placeholder="Например: новость по подпискам">
+        <label>Аудитория</label>
+        <select name="audience">{audience_options}</select>
+        <label>Формат сообщения</label>
+        <select name="parse_mode">{parse_mode_options}</select>
+        <label>Текст сообщения</label>
+        <textarea name="text" rows="10" maxlength="4000" required placeholder="Введите сообщение для пользователей"></textarea>
+        <label><input type="checkbox" name="disable_web_page_preview" value="1" checked> Отключить предпросмотр ссылок</label>
+        <button class="action-button" type="submit">Отправить рассылку</button>
+      </form>
+      <p class="muted">Сообщение отправляется сразу выбранной аудитории. Для обычного текста HTML-теги не обрабатываются.</p>
+    </section>
+    <section><h2>Последние рассылки</h2>
+      <div class="table-scroll"><table><thead><tr><th>ID</th><th>Сообщение</th><th>Аудитория</th><th>Статус</th><th>Получателей</th><th>Отправлено / ошибки</th><th>Админ</th><th>Создано</th></tr></thead><tbody>{broadcast_rows}</tbody></table></div>
+    </section>
+    <section><h2>Последние доставки рассылок</h2>
+      <div class="table-scroll"><table><thead><tr><th>Рассылка</th><th>ID Telegram</th><th>Пользователь</th><th>Статус</th><th>Время</th><th class="optional">Ошибка</th></tr></thead><tbody>{delivery_rows}</tbody></table></div>
+    </section>
+    """
+    return _base_html("Рассылки", body, token=token)
+
+
+async def collect_broadcast_recipients(session, audience: str, admin_ids: list[int]) -> list[User]:
+    query = (
+        select(User, UserAccess)
+        .outerjoin(UserAccess, UserAccess.user_id == User.id)
+        .where(User.is_active.is_(True))
+        .order_by(User.id.asc())
+    )
+    if audience == "paid":
+        query = query.where(UserAccess.status == "active", UserAccess.access_type == "paid")
+    elif audience == "trial":
+        query = query.where(UserAccess.status == "active", UserAccess.access_type == "trial")
+    elif audience == "no_access":
+        query = query.where(or_(UserAccess.id.is_(None), UserAccess.status != "active"))
+    elif audience == "admins":
+        if not admin_ids:
+            return []
+        query = query.where(User.telegram_id.in_(admin_ids))
+    elif audience != "active":
+        raise ValueError("Unknown broadcast audience")
+
+    rows = list((await session.execute(query)).all())
+    users: list[User] = []
+    seen: set[int] = set()
+    for user, _access in rows:
+        if user.telegram_id in seen:
+            continue
+        seen.add(user.telegram_id)
+        users.append(user)
+    return users
+
+
+async def create_and_send_broadcast(
+    session,
+    bot: Bot,
+    *,
+    actor_username: str,
+    title: str | None,
+    text: str,
+    audience: str,
+    parse_mode: str | None,
+    disable_web_page_preview: bool,
+) -> BroadcastMessage:
+    recipients = await collect_broadcast_recipients(session, audience, get_settings().admin_ids)
+    broadcast = BroadcastMessage(
+        title=title or None,
+        text=text,
+        audience=audience,
+        parse_mode=parse_mode,
+        disable_web_page_preview=disable_web_page_preview,
+        status="processing",
+        total_recipients=len(recipients),
+        created_by=actor_username,
+    )
+    session.add(broadcast)
+    await session.flush()
+
+    sent = 0
+    failed = 0
+    for user in recipients:
+        delivery = BroadcastDelivery(
+            broadcast_id=broadcast.id,
+            user_id=user.id,
+            telegram_id=user.telegram_id,
+            status="pending",
+        )
+        session.add(delivery)
+        try:
+            await bot.send_message(
+                chat_id=user.telegram_id,
+                text=text,
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+        except Exception as exc:
+            delivery.status = "failed"
+            delivery.error_text = str(exc)[:1000]
+            failed += 1
+        else:
+            delivery.status = "sent"
+            delivery.sent_at = datetime.utcnow()
+            sent += 1
+        await asyncio.sleep(0.035)
+
+    broadcast.status = "completed"
+    broadcast.sent_count = sent
+    broadcast.failed_count = failed
+    broadcast.finished_at = datetime.utcnow()
+    await log_web_admin_action(
+        session,
+        actor_username=actor_username,
+        action="broadcast_send",
+        target_type="broadcast",
+        target_id=broadcast.id,
+        details={"audience": audience, "total": len(recipients), "sent": sent, "failed": failed},
+    )
+    await session.commit()
+    return broadcast
 
 def render_player_birthdays_html(players: list[PlayerBirthday], *, token: str = "", search: str = "", message: str = "") -> str:
     search_value = escape(search)
@@ -2532,6 +2718,71 @@ async def users(_: Annotated[None, Depends(require_web_admin)], request: Request
         rows = await collect_user_list(session, search=search)
     return HTMLResponse(render_users_html(rows, token="", search=search))
 
+@app.get("/broadcasts", response_class=HTMLResponse)
+async def broadcasts(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
+    message = request.query_params.get("message") or ""
+    async with SessionFactory() as session:
+        broadcasts_rows = list(
+            (
+                await session.scalars(
+                    select(BroadcastMessage).order_by(desc(BroadcastMessage.id)).limit(50)
+                )
+            ).all()
+        )
+        delivery_rows = list(
+            (
+                await session.execute(
+                    select(BroadcastDelivery, User)
+                    .outerjoin(User, User.id == BroadcastDelivery.user_id)
+                    .order_by(desc(BroadcastDelivery.id))
+                    .limit(100)
+                )
+            ).all()
+        )
+    return HTMLResponse(render_broadcasts_html(broadcasts_rows, delivery_rows, token="", message=message))
+
+
+@app.post("/broadcasts")
+async def broadcasts_send(actor_username: Annotated[str, Depends(require_web_admin)], request: Request) -> RedirectResponse:
+    raw_body = (await request.body()).decode("utf-8")
+    form = parse_qs(raw_body, keep_blank_values=True)
+    title = (form.get("title", [""])[0] or "").strip()[:255]
+    text = (form.get("text", [""])[0] or "").strip()
+    audience = (form.get("audience", ["active"])[0] or "active").strip()
+    parse_mode_raw = (form.get("parse_mode", ["plain"])[0] or "plain").strip()
+    disable_web_page_preview = form.get("disable_web_page_preview", [""])[0] == "1"
+
+    if audience not in BROADCAST_AUDIENCE_LABELS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown broadcast audience")
+    if parse_mode_raw not in BROADCAST_PARSE_MODE_LABELS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown broadcast parse mode")
+    if not text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Broadcast text is empty")
+    if len(text) > 4000:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Broadcast text is too long")
+
+    parse_mode = None if parse_mode_raw == "plain" else parse_mode_raw
+    settings = get_settings()
+    bot = Bot(token=settings.bot_token)
+    try:
+        async with SessionFactory() as session:
+            broadcast = await create_and_send_broadcast(
+                session,
+                bot,
+                actor_username=actor_username,
+                title=title,
+                text=text,
+                audience=audience,
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+    finally:
+        await bot.session.close()
+
+    params = urlencode({
+        "message": f"Рассылка #{broadcast.id}: отправлено {broadcast.sent_count}, ошибок {broadcast.failed_count}",
+    })
+    return RedirectResponse(url=f"/broadcasts?{params}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/subscriptions", response_class=HTMLResponse)
 async def subscriptions(_: Annotated[None, Depends(require_web_admin)], request: Request) -> HTMLResponse:
